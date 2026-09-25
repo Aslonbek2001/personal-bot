@@ -1,0 +1,15 @@
+services:
+  bot:
+    build: .
+    container_name: english-bot
+    env_file: .env
+    environment:
+      TZ: Asia/Tashkent
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
