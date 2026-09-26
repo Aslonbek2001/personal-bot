@@ -69,8 +69,13 @@ class ChatReply(BaseModel):
         "would write it in a work chat. null if my message is already natural, is only a short "
         "greeting or phrase, or is not in English. Never just add filler words."
     )
+    tip: str | None = Field(
+        description="A short reminder of the rule behind my mistakes, 1-2 lines in Uzbek, "
+        f"with English examples. null if there is no rule worth reminding. {MARKUP_RULE}"
+    )
     reply: str = Field(
-        description=f"Your answer or response. Do not put the follow-up question here. {MARKUP_RULE}"
+        description="Your answer or response. Do not put the follow-up question "
+        f"or the rule reminder here. {MARKUP_RULE}"
     )
     question: str = Field(
         description="The next question or task for me, as the current mode defines it. "

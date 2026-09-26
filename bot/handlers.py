@@ -3,11 +3,14 @@
 import asyncio
 import html
 import logging
+import random
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import timedelta
 
 from aiogram import Bot, F, Router
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -38,6 +41,8 @@ ITALIC = re.compile(r"(?<![\w*])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![\w*])")
 BLANK_LINES = re.compile(r"\n\s*\n")
 ERROR_TEXT = "⚠️ Claude bilan bog'lanib bo'lmadi. Birozdan keyin qayta urinib ko'ring."
 MAX_VOICE_SECONDS = 300
+BUSY_TEXT = "⏳ Oldingi javob tayyorlanmoqda, biroz kuting."
+DRAFT_REFRESH = 20
 MARKUP = re.compile(r"[*`]")
 GREETING = (
     "Salom! 👋 Men sizning shaxsiy ingliz tili va tech mentoringizman.\n\n"
@@ -61,6 +66,45 @@ class Tech(StatesGroup):
 
 
 TECH_STATES = {Tech.sections.state, Tech.topics.state, Tech.subsections.state, Tech.chat.state}
+
+
+# ─────────────── Kutish: band holat va "Thinking…" ───────────────
+
+_busy: set[int] = set()
+
+
+@asynccontextmanager
+async def exclusive(chat_id: int) -> AsyncIterator[bool]:
+    """Bir vaqtda bitta so'rov: band bo'lsa False beradi."""
+    if chat_id in _busy:
+        yield False
+        return
+    _busy.add(chat_id)
+    try:
+        yield True
+    finally:
+        _busy.discard(chat_id)
+
+
+@asynccontextmanager
+async def thinking(bot: Bot, chat_id: int) -> AsyncIterator[None]:
+    """Chatda 'Thinking…' qoralamasini ko'rsatadi; qoralama 30 s yashagani uchun yangilab turadi."""
+    draft_id = random.randint(1, 2**31 - 1)
+
+    async def refresh() -> None:
+        while True:
+            try:
+                await bot.send_message_draft(chat_id=chat_id, draft_id=draft_id, text="")
+            except TelegramAPIError as error:
+                log.warning("Qoralama yuborilmadi: %s", error)
+                return
+            await asyncio.sleep(DRAFT_REFRESH)
+
+    task = asyncio.create_task(refresh())
+    try:
+        yield
+    finally:
+        task.cancel()
 
 
 # ─────────────── Formatlash va yuborish ───────────────
@@ -211,7 +255,7 @@ def mistakes_text(mistakes: list[db.Mistake]) -> str:
         return "\n".join([*lines, "", "Hali xatolar yo'q. Yozing yoki gapiring — xatolar shu yerda to'planadi."])
     lines.append("")
     lines += [
-        f"• <s>{esc(m.wrong)}</s> → <b>{esc(m.right)}</b>\n   <i>{fmt(m.note)}</i>"
+        f"• <s>{esc(m.wrong)}</s> → <b>{esc(m.right)}</b>\n   {fmt(m.note)}"
         for m in mistakes
     ]
     return "\n".join(lines)
@@ -244,12 +288,14 @@ def reply_text(
     if reply.corrected:
         lines = ["✏️ <b>To'g'rilangan:</b>", quote(reply.corrected)]
         lines += [
-            f"• <s>{esc(fix.wrong)}</s> → <b>{esc(fix.right)}</b>\n   <i>{fmt(fix.note)}</i>"
+            f"• <s>{esc(fix.wrong)}</s> → <b>{esc(fix.right)}</b>\n   {fmt(fix.note)}"
             for fix in reply.fixes
         ]
         parts.append("\n".join(lines))
     if reply.improved:
         parts.append(f"🚀 <b>Tabiiyroq:</b>\n{quote(reply.improved)}")
+    if reply.tip:
+        parts.append(f"📌 <b>Eslatma:</b>\n{quote(reply.tip)}")
     if used and words:
         names = ", ".join(f"<b>{esc(word)}</b>" for word in used)
         parts.append(f"🔤 Bugungi so'zlar: {names} ({sum(w.used for w in words)}/{len(words)})")
@@ -297,7 +343,7 @@ async def send_lesson(bot: Bot, chat_id: int, morning: bool = False) -> None:
         await bot.send_message(chat_id, "🎉 topics.md dagi barcha mavzular tugadi! Yangi mavzular qo'shing.")
         return
     try:
-        async with ChatActionSender.upload_photo(bot=bot, chat_id=chat_id):
+        async with thinking(bot, chat_id):
             lesson = await get_lesson(topic)
     except Exception:
         log.exception("Dars yaratilmadi")
@@ -339,9 +385,13 @@ async def open_menu(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(kb.MenuCb.filter(F.action == "today"))
 async def today_lesson(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.answer()
-    await state.set_state(None)
-    await send_lesson(callback.bot, callback.from_user.id)
+    async with exclusive(callback.from_user.id) as free:
+        if not free:
+            await callback.answer(BUSY_TEXT)
+            return
+        await callback.answer()
+        await state.set_state(None)
+        await send_lesson(callback.bot, callback.from_user.id)
 
 
 def today_words() -> list[str]:
@@ -360,7 +410,7 @@ async def start_mode(bot: Bot, chat_id: int, state: FSMContext, mode: str) -> No
         await bot.send_message(chat_id, "📝 Oxirgi 2 haftada xato topilmadi. Zo'r! 🎉", reply_markup=kb.main_menu())
         return
     try:
-        async with ChatActionSender.typing(bot=bot, chat_id=chat_id):
+        async with thinking(bot, chat_id):
             opening = await claude.opening(mode, topic_title(), today_words(), mistakes)
     except Exception:
         log.exception("Rejim boshlanmadi: %s", mode)
@@ -383,10 +433,15 @@ async def start_mode(bot: Bot, chat_id: int, state: FSMContext, mode: str) -> No
 
 @router.callback_query(kb.ModeCb.filter())
 async def mode_chosen(callback: CallbackQuery, callback_data: kb.ModeCb, state: FSMContext) -> None:
-    await callback.answer()
     if callback_data.mode not in MODE_ICONS:
+        await callback.answer()
         return
-    await start_mode(callback.bot, callback.from_user.id, state, callback_data.mode)
+    async with exclusive(callback.from_user.id) as free:
+        if not free:
+            await callback.answer(BUSY_TEXT)
+            return
+        await callback.answer()
+        await start_mode(callback.bot, callback.from_user.id, state, callback_data.mode)
 
 
 @router.callback_query(kb.MenuCb.filter(F.action == "mistakes"))
@@ -486,17 +541,28 @@ async def tech_subsection(callback: CallbackQuery, callback_data: kb.TechCb, sta
     except LookupError:
         await tech_list_changed(callback, state)
         return
-    await callback.answer()
     chat_id = callback.from_user.id
+    async with exclusive(chat_id) as free:
+        if not free:
+            await callback.answer(BUSY_TEXT)
+            return
+        await callback.answer()
+        await explain(callback.bot, chat_id, state, names, (s, t, u))
+
+
+async def explain(
+    bot: Bot, chat_id: int, state: FSMContext, names: tuple[str, str, str], nav: tuple[int, int, int]
+) -> None:
+    s, t, u = nav
     try:
-        async with ChatActionSender.typing(bot=callback.bot, chat_id=chat_id):
+        async with thinking(bot, chat_id):
             ex = await claude.explain_subsection(*names)
     except Exception:
         log.exception("Tushuntirish yaratilmadi")
-        await callback.bot.send_message(chat_id, ERROR_TEXT)
+        await bot.send_message(chat_id, ERROR_TEXT)
         return
     await send_text(
-        callback.bot, chat_id,
+        bot, chat_id,
         explanation_text(names, ex),
         kb.reply_nav(tech=(s, t, u), next_name=tech_next_name(s, t, u)),
     )
@@ -547,7 +613,7 @@ async def respond(
         history = data.get(history_key, []) if data.get("history_day") == day.isoformat() else []
 
     try:
-        async with ChatActionSender.typing(bot=bot, chat_id=chat_id):
+        async with thinking(bot, chat_id):
             if in_tech:
                 reply = await claude.tech_reply(text, history, scope_names, seconds)
             else:
@@ -602,15 +668,19 @@ async def speak_reply(callback: CallbackQuery, state: FSMContext) -> None:
     if not text:
         await callback.answer("Bu xabar eskirgan")
         return
-    await callback.answer()
     chat_id = callback.from_user.id
-    try:
-        async with ChatActionSender.record_voice(bot=callback.bot, chat_id=chat_id):
-            audio = await voice.speak(text)
-    except Exception:
-        log.exception("Ovoz yaratilmadi")
-        await callback.bot.send_message(chat_id, "⚠️ Ovozni yaratib bo'lmadi. Birozdan keyin qayta urinib ko'ring.")
-        return
+    async with exclusive(chat_id) as free:
+        if not free:
+            await callback.answer(BUSY_TEXT)
+            return
+        await callback.answer()
+        try:
+            async with ChatActionSender.record_voice(bot=callback.bot, chat_id=chat_id):
+                audio = await voice.speak(text)
+        except Exception:
+            log.exception("Ovoz yaratilmadi")
+            await callback.bot.send_message(chat_id, "⚠️ Ovozni yaratib bo'lmadi. Birozdan keyin qayta urinib ko'ring.")
+            return
     await callback.bot.send_voice(
         chat_id,
         BufferedInputFile(audio, filename="speech.ogg"),
@@ -621,7 +691,11 @@ async def speak_reply(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(F.text & ~F.text.startswith("/"))
 async def on_text(message: Message, state: FSMContext) -> None:
-    await respond(message.bot, message.chat.id, state, message.text, reply_to=message.message_id)
+    async with exclusive(message.chat.id) as free:
+        if not free:
+            await message.reply(BUSY_TEXT)
+            return
+        await respond(message.bot, message.chat.id, state, message.text, reply_to=message.message_id)
 
 
 async def voice_prompt(state: FSMContext) -> str:
@@ -644,18 +718,23 @@ async def on_voice(message: Message, state: FSMContext) -> None:
     if media.duration and media.duration > MAX_VOICE_SECONDS:
         await message.reply(f"⏱ Ovozli xabar {MAX_VOICE_SECONDS // 60} daqiqadan oshmasin.")
         return
-    try:
-        async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
-            audio = await message.bot.download(media)
-            text = await voice.transcribe(audio.read(), prompt=await voice_prompt(state))
-    except Exception:
-        log.exception("Ovoz matnga o'girilmadi")
-        await message.reply("⚠️ Ovozni matnga o'girib bo'lmadi. Qaytadan yuboring.")
-        return
-    if not text:
-        await message.reply("🤔 Hech narsa eshitilmadi. Telefonni og'zingizga yaqinroq tutib qayta yuboring.")
-        return
-    await respond(message.bot, message.chat.id, state, text, reply_to=message.message_id, seconds=media.duration or 0)
+    async with exclusive(message.chat.id) as free:
+        if not free:
+            await message.reply(BUSY_TEXT)
+            return
+        try:
+            async with thinking(message.bot, message.chat.id):
+                audio = await message.bot.download(media)
+                text = await voice.transcribe(audio.read(), prompt=await voice_prompt(state))
+        except Exception:
+            log.exception("Ovoz matnga o'girilmadi")
+            await message.reply("⚠️ Ovozni matnga o'girib bo'lmadi. Qaytadan yuboring.")
+            return
+        if not text:
+            await message.reply("🤔 Hech narsa eshitilmadi. Telefonni og'zingizga yaqinroq tutib qayta yuboring.")
+            return
+        await respond(message.bot, message.chat.id, state, text, reply_to=message.message_id, seconds=media.duration or 0)
+
 
 # ─────────────── Rejali xabarlar ───────────────
 
