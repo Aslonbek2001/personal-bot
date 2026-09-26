@@ -1,12 +1,15 @@
 """Claude bilan ishlash: kunlik dars, suhbat javobi va tech tushuntirish."""
 
+import logging
 from typing import TypeVar
 
 from anthropic import AsyncAnthropic
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from bot.config import settings
 from bot.storage import read_context
+
+log = logging.getLogger(__name__)
 
 client = AsyncAnthropic(api_key=settings.anthropic_api_key.get_secret_value())
 
@@ -101,7 +104,11 @@ class Explanation(BaseModel):
 
 # ─────────────── Umumiy chaqiruv ───────────────
 
-async def _ask(model: type[T], task: str, messages: list[dict], max_tokens: int) -> T:
+class Truncated(Exception):
+    pass
+
+
+async def _request(model: type[T], task: str, messages: list[dict], max_tokens: int) -> T:
     response = await client.messages.parse(
         model=settings.claude_model,
         max_tokens=max_tokens,
@@ -112,9 +119,20 @@ async def _ask(model: type[T], task: str, messages: list[dict], max_tokens: int)
         messages=messages,
         output_format=model,
     )
+    if response.stop_reason == "max_tokens":
+        raise Truncated
     if response.parsed_output is None:
         raise RuntimeError(f"Claude tuzilmali javob qaytarmadi (stop_reason={response.stop_reason})")
     return response.parsed_output
+
+
+async def _ask(model: type[T], task: str, messages: list[dict], max_tokens: int) -> T:
+    """Javob max_tokens da kesilib, JSON buzilsa, ikki barobar limit bilan bir marta qayta so'raydi."""
+    try:
+        return await _request(model, task, messages, max_tokens)
+    except (Truncated, ValidationError):
+        log.warning("%s javobi kesildi (max_tokens=%d), qayta so'ralmoqda", model.__name__, max_tokens)
+        return await _request(model, task, messages, max_tokens * 2)
 
 
 def _user_message(text: str, seconds: int | None) -> dict:
@@ -148,13 +166,13 @@ def _mode_task(mode: str, topic: str, words: list[str], mistakes: list[str]) -> 
 async def make_lesson(topic: str) -> Lesson:
     task = "Create today's lesson. Follow 'Lesson structure' from the context exactly."
     messages = [{"role": "user", "content": f"Today's grammar topic: {topic}"}]
-    return await _ask(Lesson, task, messages, max_tokens=4000)
+    return await _ask(Lesson, task, messages, max_tokens=8000)
 
 
 async def opening(mode: str, topic: str, words: list[str], mistakes: list[str]) -> Opening:
     task = _mode_task(mode, topic, words, mistakes)
     messages = [{"role": "user", "content": "Let's start. Give me the first question or task."}]
-    return await _ask(Opening, task, messages, max_tokens=800)
+    return await _ask(Opening, task, messages, max_tokens=2000)
 
 
 async def practice_reply(
@@ -167,13 +185,13 @@ async def practice_reply(
     seconds: int | None = None,
 ) -> ChatReply:
     task = _mode_task(mode, topic, words, mistakes)
-    return await _ask(ChatReply, task, [*history, _user_message(text, seconds)], max_tokens=1500)
+    return await _ask(ChatReply, task, [*history, _user_message(text, seconds)], max_tokens=4000)
 
 
 async def explain_subsection(section: str, topic: str, subsection: str) -> Explanation:
     task = "Mode: tech subsection explanation (see 'When I choose a subsection from my tech list')."
     content = f"Section: {section}\nTopic: {topic}\nSubsection: {subsection}"
-    return await _ask(Explanation, task, [{"role": "user", "content": content}], max_tokens=3000)
+    return await _ask(Explanation, task, [{"role": "user", "content": content}], max_tokens=6000)
 
 
 async def tech_reply(
@@ -190,4 +208,4 @@ async def tech_reply(
         )
     else:
         task = "Mode: tech question in chat (see 'When I ask a tech question in chat')."
-    return await _ask(ChatReply, task, [*history, _user_message(text, seconds)], max_tokens=2500)
+    return await _ask(ChatReply, task, [*history, _user_message(text, seconds)], max_tokens=6000)
