@@ -1,2 +1,5 @@
 .env
-data/bot.db
+data/bot.db*
+data/process.md*
+__pycache__/
+*.pyc

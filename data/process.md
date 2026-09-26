@@ -1,1 +1,0 @@
-# Tugallangan mavzular

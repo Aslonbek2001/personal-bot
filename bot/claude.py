@@ -13,10 +13,12 @@ client = AsyncAnthropic(api_key=settings.anthropic_api_key.get_secret_value())
 T = TypeVar("T", bound=BaseModel)
 
 MARKUP_RULE = (
-    "Plain text only. Mark important words with **double asterisks**. "
+    "Plain text with light markup: **double asterisks** for key words and grammar forms, "
+    "*single asterisks* for whole English example sentences, `backticks` for technical names. "
+    "Use markup only where it helps, not on every line. "
     "Use line breaks: one idea per line, and put each example or step on its own line "
     "starting with '• ' or '1.'. Put an Uzbek note on its own line. "
-    "No Markdown headings, tables or backticks."
+    "No Markdown headings or tables."
 )
 
 VOICE_NOTE = (
@@ -45,26 +47,43 @@ class Lesson(BaseModel):
     words: list[Word] = Field(description="Part 3: exactly 20 words of the day")
 
 
+class Fix(BaseModel):
+    wrong: str = Field(description="The wrong words exactly as I wrote them")
+    right: str = Field(description="The correct words")
+    note: str = Field(description="Why, in one short sentence in Uzbek")
+
+
 class ChatReply(BaseModel):
     corrected: str | None = Field(
         description="My message with the mistakes fixed. Mark every changed word with "
         "**double asterisks**. null if there are no mistakes or my message is not in English."
     )
-    improved: str | None = Field(
-        description="A slightly more natural and professional version of my message. "
-        "null if my message is not in English."
+    fixes: list[Fix] = Field(
+        description="Each real grammar or word-choice mistake in my message. Empty if there are none."
     )
-    reply: str = Field(description=f"Your answer or response. {MARKUP_RULE}")
-    question: str = Field(description="One follow-up question to continue the conversation")
-    options: list[str] = Field(
-        description="2-3 short possible answers to the follow-up question, written as I would say them"
+    improved: str | None = Field(
+        description="A more natural, professional version of my message, as a native developer "
+        "would write it in a work chat. null if my message is already natural, is only a short "
+        "greeting or phrase, or is not in English. Never just add filler words."
+    )
+    reply: str = Field(
+        description=f"Your answer or response. Do not put the follow-up question here. {MARKUP_RULE}"
+    )
+    question: str = Field(
+        description="The next question or task for me, as the current mode defines it. "
+        "I must answer it in my own words."
     )
 
 
 class Opening(BaseModel):
-    message: str = Field(description=f"One or two short lines: greet me and say what we practice today. {MARKUP_RULE}")
-    question: str = Field(description="The first question about today's grammar topic")
-    options: list[str] = Field(description="2-3 short possible answers, written as I would say them")
+    message: str = Field(
+        description="One or two short lines: greet me and say what we practice today. "
+        f"Do not put the question here. {MARKUP_RULE}"
+    )
+    question: str = Field(
+        description="The first question or task for me, as the current mode defines it. "
+        "I must answer it in my own words."
+    )
 
 
 class Explanation(BaseModel):
@@ -76,9 +95,8 @@ class Explanation(BaseModel):
     )
     where: str = Field(description=f"4. Where it lives in a real system. {MARKUP_RULE}")
     example: str = Field(description=f"5. A real-world example from a backend, RAG or ML project. {MARKUP_RULE}")
-    mistakes: list[str] = Field(description="6. Common mistakes, 2-4 short items")
-    question: str = Field(description="One follow-up question")
-    options: list[str] = Field(description="2-3 short possible answers, written as I would say them")
+    mistakes: list[str] = Field(description=f"6. Common mistakes, 2-4 short items. {MARKUP_RULE}")
+    question: str = Field(description="One open follow-up question that I must answer in my own words")
 
 
 # ─────────────── Umumiy chaqiruv ───────────────
@@ -99,11 +117,33 @@ async def _ask(model: type[T], task: str, messages: list[dict], max_tokens: int)
     return response.parsed_output
 
 
-def _user_message(text: str, is_voice: bool) -> dict:
-    return {"role": "user", "content": (VOICE_NOTE if is_voice else "") + text}
+def _user_message(text: str, seconds: int | None) -> dict:
+    if seconds is None:
+        return {"role": "user", "content": text}
+    note = VOICE_NOTE
+    if seconds:
+        words = len(text.split())
+        note += f"[Voice message: {words} words in {seconds} seconds, {round(words * 60 / seconds)} words per minute.]\n\n"
+    return {"role": "user", "content": note + text}
 
 
-# ─────────────── Ochiq funksiyalar ───────────────
+MODES = {
+    "chat": "Mode: chat practice (see 'Chat practice').",
+    "translate": "Mode: translation practice (see 'Translation practice').",
+    "task": "Mode: work writing task (see 'Work writing tasks').",
+    "standup": "Mode: stand-up speaking practice (see 'Stand-up speaking practice').",
+    "review": "Mode: mistakes review (see 'Mistakes review').",
+}
+
+
+def _mode_task(mode: str, topic: str, words: list[str], mistakes: list[str]) -> str:
+    lines = [MODES[mode], f"Today's grammar topic: {topic}"]
+    if words and mode in ("chat", "task"):
+        lines.append("Today's words: " + ", ".join(words))
+    if mistakes:
+        lines.append("My recent mistakes (wrong -> right):\n" + "\n".join(mistakes))
+    return "\n".join(lines)
+
 
 async def make_lesson(topic: str) -> Lesson:
     task = "Create today's lesson. Follow 'Lesson structure' from the context exactly."
@@ -111,17 +151,23 @@ async def make_lesson(topic: str) -> Lesson:
     return await _ask(Lesson, task, messages, max_tokens=4000)
 
 
-async def opening_question(topic: str) -> Opening:
-    task = f"Mode: chat practice (see 'Chat practice'). Today's grammar topic: {topic}"
-    messages = [{"role": "user", "content": "I pressed 'Start chat'. Start the practice with your first question."}]
-    return await _ask(Opening, task, messages, max_tokens=600)
+async def opening(mode: str, topic: str, words: list[str], mistakes: list[str]) -> Opening:
+    task = _mode_task(mode, topic, words, mistakes)
+    messages = [{"role": "user", "content": "Let's start. Give me the first question or task."}]
+    return await _ask(Opening, task, messages, max_tokens=800)
 
 
 async def practice_reply(
-    text: str, history: list[dict], topic: str, is_voice: bool = False
+    text: str,
+    history: list[dict],
+    mode: str,
+    topic: str,
+    words: list[str],
+    mistakes: list[str],
+    seconds: int | None = None,
 ) -> ChatReply:
-    task = f"Mode: chat practice (see 'Chat practice'). Today's grammar topic: {topic}"
-    return await _ask(ChatReply, task, [*history, _user_message(text, is_voice)], max_tokens=1500)
+    task = _mode_task(mode, topic, words, mistakes)
+    return await _ask(ChatReply, task, [*history, _user_message(text, seconds)], max_tokens=1500)
 
 
 async def explain_subsection(section: str, topic: str, subsection: str) -> Explanation:
@@ -134,7 +180,7 @@ async def tech_reply(
     text: str,
     history: list[dict],
     scope: tuple[str, str, str] | None,
-    is_voice: bool = False,
+    seconds: int | None = None,
 ) -> ChatReply:
     if scope:
         section, topic, subsection = scope
@@ -144,4 +190,4 @@ async def tech_reply(
         )
     else:
         task = "Mode: tech question in chat (see 'When I ask a tech question in chat')."
-    return await _ask(ChatReply, task, [*history, _user_message(text, is_voice)], max_tokens=2500)
+    return await _ask(ChatReply, task, [*history, _user_message(text, seconds)], max_tokens=2500)

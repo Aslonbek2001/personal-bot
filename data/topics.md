@@ -1,6 +1,6 @@
 # Topics
 # One topic per line. Lines starting with "#" are ignored.
-# Do not rename a topic after it is done: process.md tracks topics by name.
+# Do not rename a topic after it is done: progress is saved by topic name.
 
 ## Block 1: Tenses for daily work
 1. Present Simple vs Present Continuous - describing your routine and current tasks in a stand-up

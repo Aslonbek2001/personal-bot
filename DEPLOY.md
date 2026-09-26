@@ -38,4 +38,10 @@ docker compose restart       # qayta ishga tushirish
 docker compose down          # to'xtatish
 ```
 
+Barcha ma'lumotlar (progress, so'zlar, xatolar, suhbat holati) `data/bot.db` da saqlanadi. Zaxira nusxa:
+
+```bash
+scp root@SERVER_IP:~/english-teacher/data/bot.db ./bot.backup.db
+```
+
 > Lokal botni o'chirib qo'ying — bitta token bilan bot faqat bitta joyda ishlaydi.

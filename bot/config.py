@@ -26,9 +26,16 @@ class Settings(BaseSettings):
     stt_model: str = "whisper-large-v3"
     stt_language: str = "en"
 
+    # Matn -> ovoz
+    tts_model: str = "canopylabs/orpheus-v1-english"
+    tts_voice: str = "troy"
+
     # Vaqt
     timezone: str = "Asia/Tashkent"
     lesson_hour: int = Field(default=5, ge=0, le=23)
+    reminder_hour: int = Field(default=20, ge=0, le=23)
+    review_day: str = "sun"
+    review_hour: int = Field(default=11, ge=0, le=23)
 
     # Boshqa
     history_limit: int = 6
@@ -53,6 +60,10 @@ class Settings(BaseSettings):
     @property
     def process_path(self) -> Path:
         return self.data_dir / "process.md"
+
+    @property
+    def db_path(self) -> Path:
+        return self.data_dir / "bot.db"
 
 
 settings = Settings()

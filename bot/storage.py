@@ -1,12 +1,12 @@
-"""data/ papkasidagi fayllar bilan ishlash: context, topics, tech va process."""
+"""data/ papkasidagi fayllar (context, topics, tech) va progress."""
 
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
+from bot import db
 from bot.config import settings
 
-PROCESS_HEADER = "# Tugallangan mavzular\n"
 NUMBER_PREFIX = re.compile(r"^\d+[.)]\s*")
 
 
@@ -32,32 +32,13 @@ def read_topics() -> list[str]:
     return topics
 
 
-# ─────────────── Progress: process.md ───────────────
+# ─────────────── Progress ───────────────
 
-@dataclass(frozen=True)
-class DoneEntry:
-    day: date
-    topic: str
+DoneEntry = db.DoneEntry
 
 
 def read_process() -> list[DoneEntry]:
-    """process.md dagi '- 2026-09-25 | Mavzu' qatorlari."""
-    path = settings.process_path
-    if not path.exists():
-        return []
-    entries = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.startswith("- "):
-            continue
-        day_text, separator, topic = line[2:].partition(" | ")
-        if not separator:
-            continue
-        try:
-            day = date.fromisoformat(day_text.strip())
-        except ValueError:
-            continue
-        entries.append(DoneEntry(day=day, topic=topic.strip()))
-    return entries
+    return db.done_topics()
 
 
 def todays_topic() -> str | None:
@@ -75,18 +56,31 @@ def is_done_today() -> bool:
 
 
 def mark_done(topic: str) -> bool:
-    """Mavzuni process.md ga yozadi. Bugun allaqachon yozilgan bo'lsa, False qaytaradi."""
-    if is_done_today():
-        return False
-    path = settings.process_path
-    text = path.read_text(encoding="utf-8") if path.exists() else ""
-    if not text.strip():
-        text = PROCESS_HEADER
-    if not text.endswith("\n"):
-        text += "\n"
-    text += f"- {today().isoformat()} | {topic}\n"
-    path.write_text(text, encoding="utf-8")
-    return True
+    """Bugungi mavzuni tugallangan deb belgilaydi. Bugun allaqachon belgilangan bo'lsa, False."""
+    return db.add_done(today(), topic)
+
+
+# ─────────────── Kunlik so'zlar ───────────────
+
+ARTICLES = {"to", "a", "an", "the"}
+
+
+def _word_pattern(word: str) -> re.Pattern | None:
+    """'to deploy' -> deploy, deploys, deployed, deploying."""
+    parts = re.findall(r"[a-z']+", word.lower())
+    if len(parts) > 1 and parts[0] in ARTICLES:
+        parts = parts[1:]
+    if not parts:
+        return None
+    *head, last = parts
+    stem = last[:-1] if len(last) > 4 and last.endswith("e") else last
+    body = r"\s+".join([*map(re.escape, head), re.escape(stem) + r"[a-z']{0,3}"])
+    return re.compile(rf"\b{body}\b")
+
+
+def find_used_words(text: str, words: list[str]) -> list[str]:
+    lowered = text.lower()
+    return [word for word in words if (pattern := _word_pattern(word)) and pattern.search(lowered)]
 
 
 @dataclass(frozen=True)

@@ -1,9 +1,10 @@
-"""Telegram handler'lari: menyu, dars, suhbat va tech bo'limi."""
+"""Telegram handler'lari: menyu, dars, mashq rejimlari, tech bo'limi va rejali xabarlar."""
 
 import asyncio
 import html
 import logging
 import re
+from datetime import timedelta
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -19,7 +20,7 @@ from aiogram.types import (
 )
 from aiogram.utils.chat_action import ChatActionSender
 
-from bot import claude, storage, voice
+from bot import claude, db, storage, voice
 from bot import keyboards as kb
 from bot.card import render_card
 from bot.config import settings
@@ -31,15 +32,25 @@ router.message.filter(F.from_user.id == settings.owner_id)
 router.callback_query.filter(F.from_user.id == settings.owner_id)
 
 MAX_LENGTH = 4000
-BOLD = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
+CODE = re.compile(r"`([^`\n]+)`")
+BOLD = re.compile(r"\*\*([^\n]+?)\*\*")
+ITALIC = re.compile(r"(?<![\w*])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![\w*])")
+BLANK_LINES = re.compile(r"\n\s*\n")
 ERROR_TEXT = "⚠️ Claude bilan bog'lanib bo'lmadi. Birozdan keyin qayta urinib ko'ring."
 MAX_VOICE_SECONDS = 300
+MARKUP = re.compile(r"[*`]")
 GREETING = (
     "Salom! 👋 Men sizning shaxsiy ingliz tili va tech mentoringizman.\n\n"
     f"☀️ Har kuni {settings.lesson_hour:02d}:00 da yangi dars keladi.\n"
     "✍️ Inglizcha yozing yoki 🎙 ovozli xabar yuboring: xatolaringizni tuzataman.\n"
+    "🔁 Tarjima, 💼 ish yozishmasi va 🎙 stand-up rejimlarida yozish va gapirishni mashq qilamiz.\n"
+    "📝 Xatolaringiz saqlanadi va haftada bir marta takrorlanadi.\n"
+    f"🌙 {settings.reminder_hour:02d}:00 da kunlik natija keladi.\n"
     "🧠 Tech bo'limida backend, RAG va ML mavzularini takrorlaymiz."
 )
+MODE_ICONS = {"chat": "💬", "translate": "🔁", "task": "💼", "standup": "🎙", "review": "📝"}
+REVIEW_DAYS = 14
+SPEAK_KEEP = 20
 
 
 class Tech(StatesGroup):
@@ -59,8 +70,19 @@ def esc(text: str) -> str:
 
 
 def fmt(text: str) -> str:
-    """Claude matni: HTML'ni ekranlaydi, **qalin** ni <b> ga aylantiradi."""
-    return BOLD.sub(r"<b>\1</b>", esc(text))
+    """Claude matni: HTML'ni ekranlaydi; `kod`, **qalin**, *kursiv* ni teglarga aylantiradi."""
+    text = CODE.sub(r"<code>\1</code>", esc(text))
+    text = BOLD.sub(r"<b>\1</b>", text)
+    return ITALIC.sub(r"<i>\1</i>", text)
+
+
+def quote(text: str) -> str:
+    """Blockquote; bo'sh qatorlar olib tashlanadi, aks holda split_text blokni bo'lib yuboradi."""
+    return f"<blockquote>{BLANK_LINES.sub(chr(10), fmt(text).strip())}</blockquote>"
+
+
+def question(text: str) -> str:
+    return f"❓ <b>{esc(MARKUP.sub('', text))}</b>"
 
 
 def short(topic: str) -> str:
@@ -128,15 +150,16 @@ async def show_nav(callback: CallbackQuery, state: FSMContext, text: str, markup
     await state.update_data(nav_id=sent.message_id)
 
 
-async def remember_options(state: FSMContext, message_id: int, options: list[str]) -> None:
-    """Javob variantlarini xabar ID'si bo'yicha saqlaydi (oxirgi 20 ta xabar)."""
-    data = await state.get_data()
-    stored: dict[str, list[str]] = data.get("options", {})
-    stored[str(message_id)] = options
-    await state.update_data(options=dict(list(stored.items())[-20:]))
-
-
 # ─────────────── Matnlar ───────────────
+
+def topic_title() -> str:
+    topic = storage.todays_topic()
+    return short(topic) if topic else "free practice"
+
+
+def words_line(words: list[db.DayWord]) -> str:
+    return f"🔤 So'zlar: {sum(w.used for w in words)}/{len(words)}"
+
 
 def menu_text() -> str:
     topic = storage.todays_topic()
@@ -145,45 +168,93 @@ def menu_text() -> str:
         today_line = "🎉 Barcha mavzular tugadi"
     else:
         today_line = f"📖 Bugun: {esc(short(topic))}" + (" ✅" if storage.is_done_today() else "")
-    return f"🏠 <b>Asosiy menyu</b>\n\n{today_line}\n📊 Progress: {progress.count}/{progress.total}"
+    lines = ["🏠 <b>Asosiy menyu</b>", "", today_line, f"📊 Progress: {progress.count}/{progress.total}"]
+    words = db.day_words(storage.today())
+    if words:
+        lines.append(words_line(words))
+    return "\n".join(lines)
 
 
 def progress_text() -> str:
     progress = storage.progress()
     filled = round(progress.percent / 10)
     bar = "▓" * filled + "░" * (10 - filled)
+    week = db.stats(storage.today() - timedelta(days=6))
     lines = [
         "📊 <b>Progress</b>",
         "",
         f"Grammatika: {progress.count}/{progress.total}",
         f"{bar} {progress.percent}%",
+        "",
+        "<b>Oxirgi 7 kun:</b>",
+        f"✍️ Javoblar: {week.answers} ta, {week.words} so'z",
+        f"📝 Xatolar: {week.mistakes} ta",
     ]
+    if week.wpm:
+        lines.append(f"🗣 Gapirish tezligi: {week.wpm} so'z/daqiqa")
     if progress.done:
         lines += ["", "<b>Oxirgi tugallangan mavzular:</b>"]
         lines += [f"• {entry.day:%d.%m} — {esc(short(entry.topic))}" for entry in progress.done[-10:]]
     topic = storage.todays_topic()
     if topic:
         lines += ["", f"📖 Bugun: {esc(short(topic))} {'✅' if storage.is_done_today() else '⏳'}"]
+        words = db.day_words(storage.today())
+        if words:
+            lines.append(words_line(words))
+    return "\n".join(lines)
+
+
+def mistakes_text(mistakes: list[db.Mistake]) -> str:
+    week = db.mistakes_count(storage.today() - timedelta(days=6))
+    lines = ["📝 <b>Xatolarim</b>", "", f"Oxirgi 7 kunda: {week} ta"]
+    if not mistakes:
+        return "\n".join([*lines, "", "Hali xatolar yo'q. Yozing yoki gapiring — xatolar shu yerda to'planadi."])
+    lines.append("")
+    lines += [
+        f"• <s>{esc(m.wrong)}</s> → <b>{esc(m.right)}</b>\n   <i>{fmt(m.note)}</i>"
+        for m in mistakes
+    ]
+    return "\n".join(lines)
+
+
+def words_text(words: list[db.DayWord]) -> str:
+    if not words:
+        return "🔤 Bugungi so'zlar hali yo'q. Avval 📚 Bugungi dars ni oching."
+    lines = [f"🔤 <b>Bugungi so'zlar: {sum(w.used for w in words)}/{len(words)}</b>", ""]
+    lines += [f"{'✅' if w.used else '▫️'} <b>{esc(w.word)}</b> — {esc(w.uz)}" for w in words]
+    lines += ["", "Suhbatda ishlatgan so'zlaringiz ✅ bilan belgilanadi."]
     return "\n".join(lines)
 
 
 def reply_text(
     reply: claude.ChatReply,
     *,
-    chosen: str | None = None,
     transcript: str | None = None,
+    seconds: int | None = None,
+    used: list[str] | None = None,
+    words: list[db.DayWord] | None = None,
 ) -> str:
     parts = []
     if transcript:
-        parts.append(f"🎙 <b>Eshitildi:</b> <i>{esc(transcript)}</i>")
-    if chosen:
-        parts.append(f"➡️ <i>{esc(chosen)}</i>")
+        voice_lines = [f"🎙 <b>Eshitildi:</b> <i>{esc(transcript)}</i>"]
+        if seconds:
+            count = len(transcript.split())
+            voice_lines.append(f"🗣 {count} so'z · {seconds} s · {round(count * 60 / seconds)} so'z/daqiqa")
+        parts.append("\n".join(voice_lines))
     if reply.corrected:
-        parts.append(f"✏️ <b>Sizning gapingiz (to'g'rilangan):</b>\n{fmt(reply.corrected)}")
+        lines = ["✏️ <b>To'g'rilangan:</b>", quote(reply.corrected)]
+        lines += [
+            f"• <s>{esc(fix.wrong)}</s> → <b>{esc(fix.right)}</b>\n   <i>{fmt(fix.note)}</i>"
+            for fix in reply.fixes
+        ]
+        parts.append("\n".join(lines))
     if reply.improved:
-        parts.append(f"🚀 <b>Kuchaytirilgan versiya:</b>\n{fmt(reply.improved)}")
+        parts.append(f"🚀 <b>Tabiiyroq:</b>\n{quote(reply.improved)}")
+    if used and words:
+        names = ", ".join(f"<b>{esc(word)}</b>" for word in used)
+        parts.append(f"🔤 Bugungi so'zlar: {names} ({sum(w.used for w in words)}/{len(words)})")
     parts.append(f"💬 {fmt(reply.reply)}")
-    parts.append(f"❓ <b>{esc(reply.question)}</b>")
+    parts.append(question(reply.question))
     return "\n\n".join(parts)
 
 
@@ -198,25 +269,26 @@ def explanation_text(names: tuple[str, str, str], ex: claude.Explanation) -> str
         f"<b>4. Where it lives</b>\n{fmt(ex.where)}",
         f"<b>5. Real example</b>\n{fmt(ex.example)}",
         f"<b>6. Common mistakes</b>\n{mistakes}",
-        f"❓ <b>{esc(ex.question)}</b>",
+        question(ex.question),
     ])
 
 
 # ─────────────── Kunlik dars ───────────────
 
-_lessons: dict[tuple, claude.Lesson] = {}
 _lesson_lock = asyncio.Lock()
 
 
 async def get_lesson(topic: str) -> claude.Lesson:
-    """Bugungi darsni bir marta yaratadi va kun davomida xotiradan beradi."""
-    key = (storage.today(), topic)
+    """Bugungi darsni bir marta yaratadi va DB da saqlaydi."""
+    day = storage.today()
     async with _lesson_lock:
-        if key not in _lessons:
-            lesson = await claude.make_lesson(topic)
-            _lessons.clear()
-            _lessons[key] = lesson
-        return _lessons[key]
+        saved = db.get_lesson(day, topic)
+        if saved:
+            return claude.Lesson.model_validate_json(saved)
+        lesson = await claude.make_lesson(topic)
+        words = [(w.word, w.uz, w.example) for w in lesson.words]
+        db.save_lesson(day, topic, lesson.model_dump_json(), words)
+        return lesson
 
 
 async def send_lesson(bot: Bot, chat_id: int, morning: bool = False) -> None:
@@ -272,33 +344,63 @@ async def today_lesson(callback: CallbackQuery, state: FSMContext) -> None:
     await send_lesson(callback.bot, callback.from_user.id)
 
 
-@router.callback_query(kb.MenuCb.filter(F.action == "chat"))
-async def start_chat(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.answer()
+def today_words() -> list[str]:
+    return [w.word for w in db.day_words(storage.today())]
+
+
+def review_mistakes() -> list[str]:
+    since = storage.today() - timedelta(days=REVIEW_DAYS)
+    return [f"{m.wrong} -> {m.right}" for m in db.recent_mistakes(30, since)]
+
+
+async def start_mode(bot: Bot, chat_id: int, state: FSMContext, mode: str) -> None:
     await state.set_state(None)
-    chat_id = callback.from_user.id
-    topic = storage.todays_topic()
-    title = short(topic) if topic else "free practice"
-    try:
-        async with ChatActionSender.typing(bot=callback.bot, chat_id=chat_id):
-            opening = await claude.opening_question(title)
-    except Exception:
-        log.exception("Suhbat boshlanmadi")
-        await callback.bot.send_message(chat_id, ERROR_TEXT)
+    mistakes = review_mistakes() if mode == "review" else []
+    if mode == "review" and not mistakes:
+        await bot.send_message(chat_id, "📝 Oxirgi 2 haftada xato topilmadi. Zo'r! 🎉", reply_markup=kb.main_menu())
         return
-    sent = await send_text(
-        callback.bot, chat_id,
-        f"💬 {fmt(opening.message)}\n\n❓ <b>{esc(opening.question)}</b>",
-        kb.answer(opening.options),
+    try:
+        async with ChatActionSender.typing(bot=bot, chat_id=chat_id):
+            opening = await claude.opening(mode, topic_title(), today_words(), mistakes)
+    except Exception:
+        log.exception("Rejim boshlanmadi: %s", mode)
+        await bot.send_message(chat_id, ERROR_TEXT)
+        return
+    await send_text(
+        bot, chat_id,
+        f"{MODE_ICONS[mode]} {fmt(opening.message)}\n\n{question(opening.question)}",
+        kb.reply_nav(),
     )
     await state.update_data(
+        mode=mode,
         history_day=storage.today().isoformat(),
-        practice_history=[
-            {"role": "user", "content": "Let's start the chat practice."},
+        history=[
+            {"role": "user", "content": "Let's start. Give me the first question or task."},
             {"role": "assistant", "content": f"{opening.message}\n{opening.question}"},
         ],
     )
-    await remember_options(state, sent.message_id, opening.options)
+
+
+@router.callback_query(kb.ModeCb.filter())
+async def mode_chosen(callback: CallbackQuery, callback_data: kb.ModeCb, state: FSMContext) -> None:
+    await callback.answer()
+    if callback_data.mode not in MODE_ICONS:
+        return
+    await start_mode(callback.bot, callback.from_user.id, state, callback_data.mode)
+
+
+@router.callback_query(kb.MenuCb.filter(F.action == "mistakes"))
+async def show_mistakes(callback: CallbackQuery) -> None:
+    await callback.answer()
+    mistakes = db.recent_mistakes(15)
+    await send_text(callback.bot, callback.from_user.id, mistakes_text(mistakes), kb.mistakes_kb(bool(mistakes)))
+
+
+@router.callback_query(kb.MenuCb.filter(F.action == "words"))
+async def show_words(callback: CallbackQuery) -> None:
+    await callback.answer()
+    words = db.day_words(storage.today())
+    await callback.bot.send_message(callback.from_user.id, words_text(words), reply_markup=kb.words_kb())
 
 
 @router.callback_query(kb.MenuCb.filter(F.action == "done"))
@@ -316,7 +418,7 @@ async def mark_done(callback: CallbackQuery) -> None:
     tomorrow = f"📅 Ertaga: {esc(short(upcoming))}" if upcoming else "🎉 Bu oxirgi mavzu edi!"
     await callback.bot.send_message(
         callback.from_user.id,
-        f"✅ <b>Zo'r! Mavzu yakunlandi.</b>\n\n\"{esc(short(topic))}\" process.md ga yozildi.\n{tomorrow}",
+        f"✅ <b>Zo'r! Mavzu yakunlandi.</b>\n\n\"{esc(short(topic))}\" progressga yozildi.\n{tomorrow}",
         reply_markup=kb.after_done(),
     )
 
@@ -341,7 +443,7 @@ async def tech_root(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(Tech.sections)
     await show_nav(
         callback, state,
-        "🧠 <b>Tech bilimlar</b>\n\nBo'limni tanlang. Bu qism process.md ga yozilmaydi.",
+        "🧠 <b>Tech bilimlar</b>\n\nBo'limni tanlang. Bu qism grammatika progressiga kirmaydi.",
         kb.tech_sections(storage.read_tech()),
     )
 
@@ -393,10 +495,10 @@ async def tech_subsection(callback: CallbackQuery, callback_data: kb.TechCb, sta
         log.exception("Tushuntirish yaratilmadi")
         await callback.bot.send_message(chat_id, ERROR_TEXT)
         return
-    sent = await send_text(
+    await send_text(
         callback.bot, chat_id,
         explanation_text(names, ex),
-        kb.answer(ex.options, tech=(s, t, u), next_name=tech_next_name(s, t, u)),
+        kb.reply_nav(tech=(s, t, u), next_name=tech_next_name(s, t, u)),
     )
     summary = f"{ex.what}\n{ex.how}\n{ex.where}\n{ex.question}"
     await state.set_state(Tech.chat)
@@ -407,10 +509,9 @@ async def tech_subsection(callback: CallbackQuery, callback_data: kb.TechCb, sta
             {"role": "assistant", "content": summary},
         ],
     )
-    await remember_options(state, sent.message_id, ex.options)
 
 
-# ─────────────── Suhbat: matn va javob variantlari ───────────────
+# ─────────────── Suhbat: matn va ovoz ───────────────
 
 async def respond(
     bot: Bot,
@@ -419,10 +520,9 @@ async def respond(
     text: str,
     *,
     reply_to: int | None = None,
-    chosen: bool = False,
-    is_voice: bool = False,
+    seconds: int | None = None,
 ) -> None:
-    """Holatga qarab practice yoki tech javobini oladi va yuboradi."""
+    """Holatga qarab mashq yoki tech javobini oladi, natijani DB ga yozadi va yuboradi."""
     current = await state.get_state()
     data = await state.get_data()
     in_tech = current in TECH_STATES
@@ -438,49 +538,85 @@ async def respond(
         except LookupError:
             pass
 
-    today = storage.today().isoformat()
+    day = storage.today()
     if in_tech:
-        history_key = "tech_history"
+        mode, history_key = "tech", "tech_history"
         history = data.get(history_key, [])
     else:
-        history_key = "practice_history"
-        history = data.get(history_key, []) if data.get("history_day") == today else []
+        mode, history_key = data.get("mode", "chat"), "history"
+        history = data.get(history_key, []) if data.get("history_day") == day.isoformat() else []
 
     try:
         async with ChatActionSender.typing(bot=bot, chat_id=chat_id):
             if in_tech:
-                reply = await claude.tech_reply(text, history, scope_names, is_voice)
+                reply = await claude.tech_reply(text, history, scope_names, seconds)
             else:
-                topic = storage.todays_topic()
-                reply = await claude.practice_reply(text, history, short(topic) if topic else "free practice", is_voice)
+                mistakes = review_mistakes() if mode == "review" else []
+                reply = await claude.practice_reply(
+                    text, history, mode, topic_title(), today_words(), mistakes, seconds
+                )
     except Exception:
         log.exception("Javob olinmadi")
         await bot.send_message(chat_id, ERROR_TEXT)
         return
 
-    body = reply_text(reply, chosen=text if chosen else None, transcript=text if is_voice else None)
-    sent = await send_text(bot, chat_id, body, kb.answer(reply.options, tech=tech_nav, next_name=next_name), reply_to)
+    words = db.day_words(day)
+    used = storage.find_used_words(text, [w.word for w in words if not w.used])
+    if used:
+        db.mark_words_used(day, used)
+        words = db.day_words(day)
+    db.add_answer(mode, text, len(text.split()), seconds, len(reply.fixes))
+    db.add_mistakes([(fix.wrong, fix.right, fix.note) for fix in reply.fixes])
+
+    speak = MARKUP.sub("", reply.improved or reply.corrected or "").strip()
+    body = reply_text(
+        reply,
+        transcript=text if seconds is not None else None,
+        seconds=seconds,
+        used=used,
+        words=words,
+    )
+    sent = await send_text(
+        bot, chat_id, body,
+        kb.reply_nav(tech=tech_nav, next_name=next_name, speak=bool(speak)),
+        reply_to,
+    )
 
     history = [
         *history,
         {"role": "user", "content": text},
         {"role": "assistant", "content": f"{reply.reply}\n{reply.question}"},
     ][-settings.history_limit * 2:]
-    await state.update_data({history_key: history, "history_day": today})
-    await remember_options(state, sent.message_id, reply.options)
+    update: dict = {history_key: history, "history_day": day.isoformat()}
+    if speak:
+        stored = data.get("speak", {})
+        stored[str(sent.message_id)] = speak
+        update["speak"] = dict(list(stored.items())[-SPEAK_KEEP:])
+    await state.update_data(update)
 
 
-@router.callback_query(kb.OptionCb.filter())
-async def option_chosen(callback: CallbackQuery, callback_data: kb.OptionCb, state: FSMContext) -> None:
-    data = await state.get_data()
+@router.callback_query(kb.MenuCb.filter(F.action == "speak"))
+async def speak_reply(callback: CallbackQuery, state: FSMContext) -> None:
     message_id = callback.message.message_id if callback.message else 0
-    options = data.get("options", {}).get(str(message_id), [])
-    if callback_data.n >= len(options):
-        await callback.answer("Bu variant eskirgan, javobni yozib yuboring")
+    text = (await state.get_data()).get("speak", {}).get(str(message_id))
+    if not text:
+        await callback.answer("Bu xabar eskirgan")
         return
     await callback.answer()
-    await respond(callback.bot, callback.from_user.id, state, options[callback_data.n],
-                  reply_to=message_id, chosen=True)
+    chat_id = callback.from_user.id
+    try:
+        async with ChatActionSender.record_voice(bot=callback.bot, chat_id=chat_id):
+            audio = await voice.speak(text)
+    except Exception:
+        log.exception("Ovoz yaratilmadi")
+        await callback.bot.send_message(chat_id, "⚠️ Ovozni yaratib bo'lmadi. Birozdan keyin qayta urinib ko'ring.")
+        return
+    await callback.bot.send_voice(
+        chat_id,
+        BufferedInputFile(audio, filename="speech.ogg"),
+        caption=f"🔊 <i>{esc(text)}</i>"[:1000],
+        reply_parameters=ReplyParameters(message_id=message_id, allow_sending_without_reply=True),
+    )
 
 
 @router.message(F.text & ~F.text.startswith("/"))
@@ -519,4 +655,40 @@ async def on_voice(message: Message, state: FSMContext) -> None:
     if not text:
         await message.reply("🤔 Hech narsa eshitilmadi. Telefonni og'zingizga yaqinroq tutib qayta yuboring.")
         return
-    await respond(message.bot, message.chat.id, state, text, reply_to=message.message_id, is_voice=True)
+    await respond(message.bot, message.chat.id, state, text, reply_to=message.message_id, seconds=media.duration or 0)
+
+# ─────────────── Rejali xabarlar ───────────────
+
+async def evening_summary(bot: Bot, chat_id: int) -> None:
+    today = storage.today()
+    stats = db.stats(today)
+    words = db.day_words(today)
+    if not stats.answers:
+        await bot.send_message(
+            chat_id,
+            "🌙 <b>Bugun hali mashq qilmadingiz.</b>\n\n10 daqiqa ajrating: bir nechta gap yozing "
+            "yoki ovozli xabar yuboring.",
+            reply_markup=kb.reminder_kb(),
+        )
+        return
+    lines = [
+        "🌙 <b>Bugungi natija</b>",
+        "",
+        f"✍️ Javoblar: {stats.answers} ta, {stats.words} so'z",
+        f"📝 Xatolar: {stats.mistakes} ta",
+    ]
+    if stats.wpm:
+        lines.append(f"🗣 Gapirish tezligi: {stats.wpm} so'z/daqiqa")
+    if words:
+        lines.append(words_line(words))
+        unused = [w.word for w in words if not w.used]
+        if unused:
+            lines += ["", "Ishlatilmagan so'zlar: " + ", ".join(esc(word) for word in unused[:10])]
+    await bot.send_message(chat_id, "\n".join(lines), reply_markup=kb.words_kb())
+
+
+async def weekly_review(bot: Bot, chat_id: int, state: FSMContext) -> None:
+    if not db.mistakes_count(storage.today() - timedelta(days=6)):
+        return
+    await bot.send_message(chat_id, "📝 <b>Haftalik takrorlash</b>\n\nShu haftadagi xatolaringiz ustida ishlaymiz.")
+    await start_mode(bot, chat_id, state, "review")
