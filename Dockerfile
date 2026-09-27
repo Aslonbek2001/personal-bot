@@ -18,5 +18,6 @@ COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY bot ./bot
+COPY content ./content
 
 CMD ["python", "-m", "bot.main"]

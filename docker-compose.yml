@@ -1,11 +1,12 @@
 services:
   bot:
     build: .
-    container_name: english-bot
+    container_name: ustoz-bot
     env_file: .env
     environment:
       TZ: Asia/Tashkent
     volumes:
+      - ./content:/app/content:ro
       - ./data:/app/data
     restart: unless-stopped
     logging:

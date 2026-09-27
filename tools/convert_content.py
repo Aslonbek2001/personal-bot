@@ -5,6 +5,9 @@
 
 Prompt files (profile.md, shared/style.md, */prompt.md) are split from data/context.md by hand;
 this script checks that every line of context.md ends up in exactly one of them.
+
+The data/*.md sources were deleted after the conversion (commit e3ef9c9 has them). To rerun:
+    git show e3ef9c9:data/topics.md > data/topics.md   # and tech.md, context.md
 """
 
 import re

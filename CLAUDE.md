@@ -16,7 +16,7 @@ schemas), Groq Whisper through the `openai` client, ffmpeg, Pillow, Docker Compo
 
 ## Layout
 - `content/` — all learning content and prompts. Git-tracked, edited by hand, mounted read-only.
-- `data/` — runtime state only (`process/<owner_id>.md`). Never committed, never edited by code changes.
+- `data/` — runtime state only (`bot.db`: progress, lessons, words, mistakes, FSM). Never committed, never edited by code changes.
 - `bot/` — code. See "Structure" below.
 - `tests/` — pytest tests for logic that runs without AI.
 - `docs/ROADMAP.md` — future ideas. Implement only when explicitly asked.
@@ -35,4 +35,9 @@ schemas), Groq Whisper through the `openai` client, ffmpeg, Pillow, Docker Compo
 - Keep files under ~250 lines. Add or update tests with every logic change.
 
 ## Structure
-(filled in after the refactor: one line per folder in `bot/`)
+- `bot/content/` — loads `content/` into memory: subjects, grammar blocks, knowledge tree, stable node IDs, `/reload`.
+- `bot/services/` — SQLite (`data/bot.db`): progress and today's topic, lesson cache and daily words, answers and mistakes. No aiogram.
+- `bot/ai/` — Claude: Pydantic schemas, system prompt builder (style -> subject -> profile -> task), request calls.
+- `bot/voice/` — ffmpeg noise filter + Groq Whisper (`stt.py`), Groq TTS (`tts.py`).
+- `bot/ui/` — Telegram presentation: HTML formatting, Uzbek texts, keyboards, callback data, lesson card.
+- `bot/handlers/` — aiogram routers (start/menu, language, knowledge, chat, voice), scheduled jobs, FSM storage; owner + private filters in `__init__.py`.
