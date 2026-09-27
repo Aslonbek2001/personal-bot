@@ -1,0 +1,6 @@
+title = "English"
+icon = "🇬🇧"
+type = "language"
+order = 1
+code = "en"
+scheduled = true
