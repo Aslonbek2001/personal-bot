@@ -25,7 +25,7 @@ from aiogram.utils.chat_action import ChatActionSender
 
 from bot import claude, db, storage, voice
 from bot import keyboards as kb
-from bot.card import render_card
+from bot.ui.card import render_card
 from bot.config import settings
 
 log = logging.getLogger(__name__)

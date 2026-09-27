@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from bot.claude import Lesson
+from bot.ai.schemas import Lesson
 
 WIDTH = 1080
 PADDING = 72
