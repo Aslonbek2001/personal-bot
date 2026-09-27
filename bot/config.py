@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     # Boshqa
     history_limit: int = 6
     data_dir: Path = Path("data")
+    content_dir: Path = Path("content")
 
     @property
     def tz(self) -> ZoneInfo:
