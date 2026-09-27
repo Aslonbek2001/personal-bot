@@ -19,3 +19,19 @@ os.environ.update({
     "DATA_DIR": tempfile.mkdtemp(prefix="ustoz-test-"),
     "CONTENT_DIR": str(ROOT / "content"),
 })
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture
+def fresh_db(tmp_path, monkeypatch):
+    """Har bir test uchun alohida bo'sh bot.db."""
+    from bot.config import settings
+    from bot.services import db
+
+    db.close()
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    db.init()
+    yield tmp_path
+    db.close()
