@@ -21,8 +21,12 @@ router = Router(name="knowledge")
 
 
 async def open_node(callback: CallbackQuery, state: FSMContext, node: Node, page: int) -> None:
-    """Papka, fan yoki mavzu ro'yxatini menyu xabarida ko'rsatadi."""
     await callback.answer()
+    await show_node(callback, state, node, page)
+
+
+async def show_node(callback: CallbackQuery, state: FSMContext, node: Node, page: int) -> None:
+    """Papka, fan yoki mavzu ro'yxatini menyu xabarida ko'rsatadi."""
     library = loader.current()
     subject = library.subject_of(node)
     path = node.path()
@@ -38,7 +42,7 @@ async def list_changed(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer(texts.LIST_CHANGED)
     root = loader.current().nodes.get((await state.get_data()).get("subject", ""))
     if root is not None:
-        await open_node(callback, state, root, 0)
+        await show_node(callback, state, root, 0)
         return
     await show_home(callback, state)
 
