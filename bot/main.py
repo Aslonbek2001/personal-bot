@@ -9,8 +9,11 @@ from aiogram.fsm.storage.base import StorageKey
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from bot import db, handlers
 from bot.config import settings
+from bot.content import loader
+from bot.handlers import build_router, scheduled
+from bot.handlers.fsm import SQLiteStorage
+from bot.services import db
 
 
 async def main() -> None:
@@ -22,22 +25,23 @@ async def main() -> None:
         token=settings.bot_token.get_secret_value(),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+    library = loader.current()
     db.init()
-    storage = db.SQLiteStorage()
+    storage = SQLiteStorage()
     dp = Dispatcher(storage=storage)
-    dp.include_router(handlers.router)
+    dp.include_router(build_router())
 
     scheduler = AsyncIOScheduler(timezone=settings.tz)
     scheduler.add_job(
-        handlers.send_lesson,
+        scheduled.morning_lesson,
         CronTrigger(hour=settings.lesson_hour, minute=0, timezone=settings.tz),
-        kwargs={"bot": bot, "chat_id": settings.owner_id, "morning": True},
+        kwargs={"bot": bot, "chat_id": settings.owner_id},
         id="morning_lesson",
         misfire_grace_time=3600,
         coalesce=True,
     )
     scheduler.add_job(
-        handlers.evening_summary,
+        scheduled.evening_summary,
         CronTrigger(hour=settings.reminder_hour, minute=0, timezone=settings.tz),
         kwargs={"bot": bot, "chat_id": settings.owner_id},
         id="evening_summary",
@@ -49,7 +53,7 @@ async def main() -> None:
         key=StorageKey(bot_id=bot.id, chat_id=settings.owner_id, user_id=settings.owner_id),
     )
     scheduler.add_job(
-        handlers.weekly_review,
+        scheduled.weekly_review,
         CronTrigger(day_of_week=settings.review_day, hour=settings.review_hour, minute=0, timezone=settings.tz),
         kwargs={"bot": bot, "chat_id": settings.owner_id, "state": owner_state},
         id="weekly_review",
@@ -61,8 +65,9 @@ async def main() -> None:
         me = await bot.get_me()
         scheduler.start()
         logging.info(
-            "Bot ishga tushdi: @%s, dars %02d:00, natija %02d:00, takrorlash %s %02d:00",
-            me.username, settings.lesson_hour, settings.reminder_hour, settings.review_day, settings.review_hour,
+            "Ustoz ishga tushdi: @%s, %d ta fan, dars %02d:00, natija %02d:00, takrorlash %s %02d:00",
+            me.username, len(library.subjects), settings.lesson_hour, settings.reminder_hour,
+            settings.review_day, settings.review_hour,
         )
         await dp.start_polling(bot)
     finally:

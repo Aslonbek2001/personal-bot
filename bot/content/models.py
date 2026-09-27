@@ -26,6 +26,19 @@ class Node:
     def count(self, kind: str) -> int:
         return sum(1 for node in walk(self) if node.kind == kind)
 
+    def next_sibling(self) -> "Node | None":
+        if self.parent is None:
+            return None
+        siblings = self.parent.children
+        index = siblings.index(self)
+        return siblings[index + 1] if index + 1 < len(siblings) else None
+
+    def scope_names(self) -> tuple[str, str, str]:
+        """Qism uchun (bo'lim, mavzu, qism): bo'lim — mavzu fayli turgan papka nomi."""
+        topic = self.parent
+        assert topic is not None and topic.parent is not None
+        return topic.parent.title, topic.title, self.title
+
 
 def walk(node: Node) -> Iterator[Node]:
     """Tugunning o'zi va barcha avlodlari, tartib bilan."""
