@@ -102,3 +102,10 @@ def test_find_used_words():
     words = ["to deploy", "a rollback", "feedback", "set up"]
     used = lessons.find_used_words("We deployed it, got feedbacks and set   up CI.", words)
     assert used == ["to deploy", "feedback", "set up"]
+
+
+def test_find_used_words_russian():
+    words = ["книга", "молоко́", "остановка", "как пройти"]
+    used = lessons.find_used_words("Я купил молока и книгу. Как пройти к остановке?", words)
+    assert used == ["книга", "молоко́", "остановка", "как пройти"]
+    assert lessons.find_used_words("книжный", ["книга"]) == []

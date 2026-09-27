@@ -86,19 +86,22 @@ def mark_words_used(lang: str, day: date, words: list[str]) -> None:
 
 
 ARTICLES = {"to", "a", "an", "the"}
+VOWELS = set("eаеёиоуыэюя")
+LETTERS = r"[^\W\d_]"
 
 
 def _word_pattern(word: str) -> re.Pattern | None:
-    """'to deploy' -> deploy, deploys, deployed, deploying."""
-    parts = re.findall(r"[a-z']+", word.lower())
+    """'to deploy' -> deploy, deploys, deployed; 'книга' -> книгу, книги, книгой (lotin va kirill)."""
+    word = word.lower().replace("\u0301", "")  # urg'u belgisi
+    parts = re.findall(rf"(?:{LETTERS}|')+", word)
     if len(parts) > 1 and parts[0] in ARTICLES:
         parts = parts[1:]
     if not parts:
         return None
     *head, last = parts
-    stem = last[:-1] if len(last) > 4 and last.endswith("e") else last
-    body = r"\s+".join([*map(re.escape, head), re.escape(stem) + r"[a-z']{0,3}"])
-    return re.compile(rf"\b{body}\b")
+    stem = last[:-1] if len(last) > 4 and last[-1] in VOWELS else last
+    body = r"\s+".join([*map(re.escape, head), re.escape(stem) + rf"(?:{LETTERS}|'){{0,3}}"])
+    return re.compile(rf"(?<!\w){body}(?!\w)")
 
 
 def find_used_words(text: str, words: list[str]) -> list[str]:

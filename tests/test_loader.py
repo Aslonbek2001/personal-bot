@@ -42,7 +42,11 @@ def test_counts_match_converted_data(library):
 
 
 def test_subjects_sorted_by_order(library):
-    assert [s.key for s in library.subjects] == ["english", "programming"]
+    assert [s.key for s in library.subjects] == ["english", "russian", "programming"]
+    assert [s.code for s in library.languages] == ["en", "ru"]
+    russian = library.subject("russian")
+    assert (russian.scheduled, russian.level, russian.writing, russian.tts) == (False, "A2", "daily", False)
+    assert len(library.grammar_topics(russian)) >= 24
     assert library.default_language.key == "english"
     assert library.language_by_code("en").key == "english"
     assert library.subject("english").label == "🇬🇧 English"

@@ -62,3 +62,16 @@ def test_system_prompt_order_and_cache():
 def test_texts_never_call_the_bot_an_english_teacher():
     greeting = texts.greeting(5, 20)
     assert "Ustoz" in greeting and "English teacher" not in greeting and "ingliz tili o'qituvchi" not in greeting
+
+
+def test_russian_prompt_has_level_and_no_english_rules():
+    library = loader.current()
+    stable = prompts.system(library, library.subject("russian"), "TASK")[0]["text"]
+    assert "My level in Russian: A2." in stable
+    assert "# Writing tasks" in stable and "# Speaking practice" in stable
+    assert "native developer" not in stable and "# Correcting my mistakes" in stable
+    english = prompts.system(library, library.subject("english"), "TASK")[0]["text"]
+    assert "My level in" not in english and "native developer" in english
+    for mode in prompts.MODES.values():
+        heading = mode.split("see '")[1].rstrip("').")
+        assert f"# {heading}" in stable and f"# {heading}" in english

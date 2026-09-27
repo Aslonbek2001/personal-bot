@@ -1,6 +1,6 @@
 title = "Programming"
 icon = "💻"
 type = "knowledge"
-order = 2
+order = 3
 code = "en"  # suhbat tili: jurnal, ovoz
 tts = true

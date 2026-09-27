@@ -4,7 +4,10 @@ Personal Telegram mentor, used only by its owner.
 - English: daily grammar lesson (card + grammar + story + 20 words), practice chat with
   mistake correction, writing modes (translate, work writing, stand-up, review),
   mistakes list, daily words, voice messages and TTS.
-- Scheduled jobs: morning lesson, evening summary, weekly review.
+- Russian: the same language menu and modes, vocabulary focus (A2), everyday writing and
+  speaking situations, no TTS.
+- Scheduled jobs (only for `scheduled = true` languages, i.e. English): morning lesson,
+  evening summary, weekly review.
 - Programming: a knowledge tree (backend, RAG, ML) explained by Claude without code.
 - Russian is planned as a second language.
 
@@ -48,4 +51,4 @@ client, ffmpeg, Pillow, Docker Compose.
 - `bot/ai/` — Claude: Pydantic schemas, system prompt builder (style -> subject -> profile -> task), request calls.
 - `bot/voice/` — ffmpeg noise filter + Groq Whisper (`stt.py`), Groq TTS (`tts.py`).
 - `bot/ui/` — Telegram presentation: HTML formatting, Uzbek texts, keyboards, callback data, lesson card.
-- `bot/handlers/` — aiogram routers (start/menu, language, knowledge, chat, voice), scheduled jobs, FSM storage; owner + private filters in `__init__.py`.
+- `bot/handlers/` — aiogram routers (start/menu, language, practice, knowledge, chat, voice), scheduled jobs, FSM storage; owner + private filters in `__init__.py`.

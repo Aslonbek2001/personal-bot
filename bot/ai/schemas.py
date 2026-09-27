@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 MARKUP_RULE = (
     "Plain text with light markup: **double asterisks** for key words and grammar forms, "
-    "*single asterisks* for whole English example sentences, `backticks` for technical names. "
+    "*single asterisks* for whole example sentences in the language I am learning, `backticks` for technical names. "
     "Use markup only where it helps, not on every line. "
     "Use line breaks: one idea per line, and put each example or step on its own line "
     "starting with '• ' or '1.'. Put an Uzbek note on its own line. "
@@ -16,7 +16,7 @@ MARKUP_RULE = (
 class Word(BaseModel):
     word: str
     uz: str = Field(description="Uzbek translation")
-    example: str = Field(description="A short example sentence from a developer's workday")
+    example: str = Field(description="A short example sentence, as 'Lesson structure' describes")
 
 
 class Lesson(BaseModel):
@@ -38,19 +38,19 @@ class Fix(BaseModel):
 class ChatReply(BaseModel):
     corrected: str | None = Field(
         description="My message with the mistakes fixed. Mark every changed word with "
-        "**double asterisks**. null if there are no mistakes or my message is not in English."
+        "**double asterisks**. null if there are no mistakes or my message is not in the language I am practicing."
     )
     fixes: list[Fix] = Field(
         description="Each real grammar or word-choice mistake in my message. Empty if there are none."
     )
     improved: str | None = Field(
-        description="A more natural, professional version of my message, as a native developer "
-        "would write it in a work chat. null if my message is already natural, is only a short "
-        "greeting or phrase, or is not in English. Never just add filler words."
+        description="A more natural version of my message, as a native speaker would say it "
+        "(see 'Correcting my mistakes'). null if my message is already natural, is only a short "
+        "greeting or phrase, or is not in the language I am practicing. Never just add filler words."
     )
     tip: str | None = Field(
         description="A short reminder of the rule behind my mistakes, 1-2 lines in Uzbek, "
-        f"with English examples. null if there is no rule worth reminding. {MARKUP_RULE}"
+        f"with examples in the language I am practicing. null if there is no rule worth reminding. {MARKUP_RULE}"
     )
     reply: str = Field(
         description="Your answer or response. Do not put the follow-up question "

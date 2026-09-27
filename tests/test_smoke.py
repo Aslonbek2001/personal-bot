@@ -9,13 +9,14 @@ import pytest
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.base import BaseSession
 from aiogram.methods import AnswerCallbackQuery, EditMessageText, SendMessage, SendPhoto, TelegramMethod
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from aiogram.types import CallbackQuery, Chat, InlineKeyboardMarkup, Message, Update, User, Voice
 
 from bot.ai import client as ai
 from bot.ai.schemas import ChatReply, Explanation, Fix, Lesson, Opening, Word
 from bot.config import settings
 from bot.content import loader
-from bot.handlers import build_router
+from bot.handlers import build_router, scheduled
 from bot.handlers.fsm import SQLiteStorage
 from bot.ui import texts
 from bot.voice import stt
@@ -107,6 +108,8 @@ def answers(calls: list[TelegramMethod]) -> list[str | None]:
 
 REPLY = ChatReply(corrected="I **have** fixed it", fixes=[Fix(wrong="has", right="have", note="I bilan have")],
                   improved="I fixed the bug yesterday.", tip=None, reply="Great job", question="What was the cause?")
+REPLY_RU = ChatReply(corrected="Я купил **книгу**", fixes=[Fix(wrong="книга", right="книгу", note="tushum kelishigi")],
+                     improved=None, tip=None, reply="Отлично", question="Что ещё вы купили?")
 EXPLANATION = Explanation(what="w", why="y", how="A -> B", where="api", example="e", mistakes=["m"], question="q?")
 
 
@@ -126,7 +129,7 @@ def mocks(monkeypatch):
 
     async def practice_reply(subject, text, history, mode, topic, words, mistakes, seconds=None):
         calls["practice"].append((text, mode, seconds, len(history), subject.code))
-        return REPLY
+        return REPLY_RU if subject.code == "ru" else REPLY
 
     async def explain_subsection(subject, section, topic, subsection):
         calls["explain"].append((subject.key, section, topic, subsection))
@@ -326,3 +329,73 @@ async def test_strangers_and_groups_get_nothing(harness, mocks):
     assert await h.send("hello", chat_id=GROUP_ID) == []
     assert await h.callback("m:home", user_id=STRANGER_ID) == []
     assert mocks["practice"] == [] and mocks["tech"] == []
+
+
+async def test_russian_flow(harness, mocks):
+    h = harness
+    library = loader.current()
+    ru_topics, en_topics = library.grammar_topics(library.subject("russian")), library.grammar_topics()
+
+    # English: bitta xato, keyin Russian
+    await h.send("/start")
+    await h.press("🇬🇧 English")
+    await h.press(texts.BTN_GRAMMAR)
+    await h.press(texts.BTN_CHAT)
+    calls = await h.send("I has fixed the bug")
+    assert texts.BTN_SPEAK in str(calls[-1].reply_markup)  # English: talaffuz bor
+
+    calls = await h.send("/start")
+    assert rows(calls[-1]) == [["🇬🇧 English", "🇷🇺 Russian", "💻 Programming"]]
+    calls = await h.press("🇷🇺 Russian")
+    assert "🇷🇺 Russian" in calls[-1].text and rows(calls[-1])[0] == [texts.BTN_GRAMMAR]
+    calls = await h.press(texts.BTN_WRITING)
+    assert rows(calls[-1])[0] == [texts.BTN_TRANSLATE, texts.WRITING_LABELS["daily"]]
+    await h.press(texts.BTN_BACK)
+    await h.press(texts.BTN_GRAMMAR)
+
+    calls = await h.press(texts.BTN_TODAY)
+    assert any(isinstance(c, SendPhoto) for c in calls)
+    assert mocks["lesson"][-1] == ("ru", ru_topics[0])
+    await h.press(texts.BTN_START_CHAT)
+    assert mocks["opening"][-1] == ("ru", "chat")
+    calls = await h.send("Я купил книга")
+    assert mocks["practice"][-1][4] == "ru" and "книгу" in texts_of(calls)
+    assert texts.BTN_SPEAK not in str(calls[-1].reply_markup)  # rus ovozi yo'q
+    await h.send(voice=Voice(file_id="v", file_unique_id="v", duration=5))
+    assert mocks["stt"][-1][1] == "ru" and mocks["practice"][-1][4] == "ru"
+
+    calls = await h.press(texts.BTN_DONE)
+    assert answers(calls) == [texts.DONE_OK]
+    await h.press(texts.BTN_NEXT_TOPIC)
+    assert mocks["lesson"][-1] == ("ru", ru_topics[1])
+
+    await h.press(texts.BTN_HOME)  # dars ostidagi 🏠 -> Russian menyusi
+    calls = await h.press(texts.BTN_MISTAKES)
+    assert "книга" in texts_of(calls) and "has" not in texts_of(calls)
+    calls = await h.press(texts.BTN_PROGRESS)
+    assert f"Grammatika: 1/{len(ru_topics)}" in texts_of(calls)
+
+    calls = await h.press(texts.BTN_BACK)
+    assert "asosiy menyu" in texts_of(calls)
+    await h.press("🇬🇧 English")
+    calls = await h.press(texts.BTN_MISTAKES)
+    assert "has" in texts_of(calls) and "книга" not in texts_of(calls)
+    calls = await h.press(texts.BTN_PROGRESS)
+    assert "Grammatika: 0/32" in texts_of(calls)
+    calls = await h.send("I goes home")  # English menyusidan keyin matn English ga boradi
+    assert mocks["practice"][-1][4] == "en"
+    assert ("en", en_topics[0]) not in mocks["lesson"]
+
+
+async def test_scheduler_sends_only_english(harness, mocks):
+    h = harness
+    scheduler = AsyncIOScheduler(timezone=settings.tz)
+    scheduled.register(scheduler, h.bot, SQLiteStorage())
+    jobs = scheduler.get_jobs()
+    assert sorted(job.id for job in jobs) == ["evening_summary:en", "morning_lesson:en", "weekly_review:en"]
+    morning = next(job for job in jobs if job.id.startswith("morning"))
+    assert (morning.trigger.fields[5].expressions[0].first, morning.trigger.fields[6].expressions[0].first) == (5, 0)
+    await morning.func(**morning.kwargs)
+    calls = h.take()
+    assert mocks["lesson"] == [("en", loader.current().grammar_topics()[0])]
+    assert "Xayrli tong" in texts_of(calls)

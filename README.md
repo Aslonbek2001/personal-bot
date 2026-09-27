@@ -5,6 +5,8 @@ Personal Telegram mentor for one owner (`OWNER_ID`), private chat only.
 - **English**: a daily lesson at `LESSON_HOUR` (image card, grammar, mini story, 20 words),
   practice chat with corrections, translation, work writing, stand-up (voice), mistakes review,
   daily words, progress, pronunciation, evening summary and weekly review.
+- **Russian**: the same language menu, focused on everyday vocabulary and phrases (A2).
+  No scheduled messages; Writing is everyday messages, Speaking is daily-life role play.
 - **Programming**: a knowledge tree (backend, ML, RAG). Pick a subsection to get a
   6-part explanation without code, then chat about it in English.
 
@@ -21,7 +23,9 @@ uv run pytest                   # tests, offline
 
 - `content/` — everything the bot teaches and every prompt. Edited by hand, tracked in git,
   mounted read-only into the container.
-- `data/` — runtime state only (`bot.db`: progress, lessons, words, mistakes, chat state). Not in git.
+- `data/` — runtime state only (`bot.db`: progress, lessons, words, mistakes, chat state), every
+  per-language table keyed by `lang`. Not in git. If the bot stops with "eski sxemada", delete
+  `data/bot.db`, `data/bot.db-wal` and `data/bot.db-shm` (a fresh database is created).
 - `bot/` — code. `tests/` — pytest. `tools/` — one-time content converter.
 
 After editing `content/`, send `/reload` to the bot. No restart and no code change needed.
@@ -82,7 +86,19 @@ type = "knowledge"      # knowledge: a tree like Programming
 order = 3               # position in the main menu
 ```
 
-A `knowledge` subject shows up in the main menu with its tree. The system prompt is always
+A `knowledge` subject shows up in the main menu with its tree.
+
+A language subject (`type = "language"`) gets the full language menu, lessons and practice modes
+with no code change. Its `subject.toml` fields:
+
+| Field | Meaning |
+|---|---|
+| `code` | unique language code: Whisper language and the `lang` key in the database |
+| `scheduled` | `true`: 05:00 lesson, evening summary and weekly review for this language |
+| `default_level` | added to the system prompt, e.g. `A2` |
+| `writing` | Writing mode button: `work` (Ish yozishmasi) or `daily` (Kundalik yozishma) |
+| `tts` | `true` shows 🔊 Talaffuz (Groq TTS has English only) |
+
+Its `prompt.md` must define the sections the modes refer to: `Lesson structure`, `Chat practice`,
+`Translation practice`, `Writing tasks`, `Speaking practice`, `Mistakes review`. The system prompt is always
 `shared/style.md` -> the subject's `prompt.md` -> `profile.md` -> the current task.
-The daily lesson uses the `type = "language"` subject with `scheduled = true` and its
-`grammar/` folder (English today). A second language subject needs code changes, see `docs/ROADMAP.md`.

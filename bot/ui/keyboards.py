@@ -120,7 +120,7 @@ def words_kb(lang: str) -> InlineKeyboardMarkup:
 def reminder_kb(lang: str) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text=t.BTN_CHAT, callback_data=ModeCb(mode="chat", lang=lang))
-    b.button(text=t.BTN_STANDUP, callback_data=ModeCb(mode="standup", lang=lang))
+    b.button(text=t.BTN_SPEAKING, callback_data=ModeCb(mode="standup", lang=lang))
     _home(b, lang)
     b.adjust(2, 1)
     return b.as_markup()

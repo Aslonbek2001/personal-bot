@@ -1,0 +1,9 @@
+title = "Russian"
+icon = "🇷🇺"
+type = "language"
+order = 2
+code = "ru"            # Whisper tili, bazadagi lang
+scheduled = false      # 05:00 dars, kechki natija va haftalik takrorlash yo'q
+default_level = "A2"
+writing = "daily"      # Writing: kundalik yozishma (qo'shni, do'kon, shifokor, uy egasi)
+tts = false            # Groq TTS da rus ovozi yo'q

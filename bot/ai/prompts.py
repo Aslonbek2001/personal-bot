@@ -15,8 +15,8 @@ VOICE_NOTE = (
 MODES = {
     "chat": "Mode: chat practice (see 'Chat practice').",
     "translate": "Mode: translation practice (see 'Translation practice').",
-    "task": "Mode: work writing task (see 'Work writing tasks').",
-    "standup": "Mode: stand-up speaking practice (see 'Stand-up speaking practice').",
+    "task": "Mode: writing task (see 'Writing tasks').",
+    "standup": "Mode: speaking practice (see 'Speaking practice').",
     "review": "Mode: mistakes review (see 'Mistakes review').",
 }
 
@@ -27,7 +27,9 @@ TECH_QUESTION_TASK = "Mode: tech question in chat (see 'When I ask a tech questi
 
 def system(library: Library, subject: Subject, task: str) -> list[dict]:
     """O'zgarmas qism bitta keshlanadigan prefiks, rejim vazifasi — alohida blok."""
-    stable = "\n\n".join(part.strip() for part in (library.style, subject.prompt, library.profile) if part.strip())
+    level = f"My level in {subject.title}: {subject.level}." if subject.level else ""
+    parts = (library.style, subject.prompt, level, library.profile)
+    stable = "\n\n".join(part.strip() for part in parts if part.strip())
     return [
         {"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}},
         {"type": "text", "text": task},

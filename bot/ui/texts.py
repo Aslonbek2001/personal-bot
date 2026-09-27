@@ -11,7 +11,7 @@ ERROR = "⚠️ Claude bilan bog'lanib bo'lmadi. Birozdan keyin qayta urinib ko'
 BUSY = "⏳ Oldingi javob tayyorlanmoqda, biroz kuting."
 STALE = "Bu xabar eskirgan"
 LIST_CHANGED = "Ro'yxat o'zgargan, qaytadan tanlang"
-MODE_ICONS = {"chat": "💬", "translate": "🔁", "task": "💼", "standup": "🎙", "review": "📝"}
+MODE_ICONS = {"chat": "💬", "translate": "🔁", "task": "✍️", "standup": "🎙", "review": "📝"}
 
 BTN_HOME = "🏠 Menyu"
 BTN_BACK = "⬅️ Orqaga"
@@ -23,7 +23,6 @@ BTN_CHAT = "💬 Suhbat"
 BTN_START_CHAT = "💬 Suhbatni boshlash"
 BTN_TRANSLATE = "🔁 Tarjima"
 BTN_TASK = "💼 Ish yozishmasi"
-BTN_STANDUP = "🎙 Stand-up"
 BTN_MISTAKES = "📝 Mistakes"
 BTN_WORDS = "🔤 So'zlar"
 BTN_PROGRESS = "📊 Progress"
@@ -51,6 +50,7 @@ def greeting(lesson_hour: int, reminder_hour: int) -> str:
     return (
         "Salom! 👋 Men Ustoz — sizning shaxsiy mentoringizman.\n\n"
         f"☀️ Har kuni {lesson_hour:02d}:00 da yangi ingliz tili darsi keladi.\n"
+        "🇷🇺 Rus tilida kundalik so'z va iboralarni o'rganamiz.\n"
         "✍️ Inglizcha yozing yoki 🎙 ovozli xabar yuboring: xatolaringizni tuzataman.\n"
         "🔁 Tarjima, 💼 ish yozishmasi va 🎙 stand-up rejimlarida yozish va gapirishni mashq qilamiz.\n"
         "📝 Xatolaringiz saqlanadi va haftada bir marta takrorlanadi.\n"
