@@ -29,17 +29,33 @@ def main_menu(subjects: list[Subject]) -> InlineKeyboardMarkup:
 
 def language_menu() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text=t.BTN_TODAY, callback_data=MenuCb(action="today"))
-    b.button(text=t.BTN_CHAT, callback_data=ModeCb(mode="chat"))
-    b.button(text=t.BTN_TRANSLATE, callback_data=ModeCb(mode="translate"))
-    b.button(text=t.BTN_TASK, callback_data=ModeCb(mode="task"))
-    b.button(text=t.BTN_STANDUP, callback_data=ModeCb(mode="standup"))
+    b.button(text=t.BTN_GRAMMAR, callback_data=MenuCb(action="grammar"))
+    b.button(text=t.BTN_SPEAKING, callback_data=ModeCb(mode="standup"))
+    b.button(text=t.BTN_WRITING, callback_data=MenuCb(action="writing"))
     b.button(text=t.BTN_MISTAKES, callback_data=MenuCb(action="mistakes"))
     b.button(text=t.BTN_WORDS, callback_data=MenuCb(action="words"))
     b.button(text=t.BTN_PROGRESS, callback_data=MenuCb(action="progress"))
-    b.button(text=t.BTN_DONE, callback_data=MenuCb(action="done"))
     b.button(text=t.BTN_BACK, callback_data=MenuCb(action="home"))
-    b.adjust(2)
+    b.adjust(1, 2, 2, 2)
+    return b.as_markup()
+
+
+def grammar_menu() -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text=t.BTN_TODAY, callback_data=MenuCb(action="today"))
+    b.button(text=t.BTN_CHAT, callback_data=ModeCb(mode="chat"))
+    b.button(text=t.BTN_DONE, callback_data=MenuCb(action="done"))
+    b.button(text=t.BTN_BACK, callback_data=MenuCb(action="lang"))
+    b.adjust(2, 1, 1)
+    return b.as_markup()
+
+
+def writing_menu() -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text=t.BTN_TRANSLATE, callback_data=ModeCb(mode="translate"))
+    b.button(text=t.BTN_TASK, callback_data=ModeCb(mode="task"))
+    b.button(text=t.BTN_BACK, callback_data=MenuCb(action="lang"))
+    b.adjust(2, 1)
     return b.as_markup()
 
 

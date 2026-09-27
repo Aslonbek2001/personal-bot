@@ -50,6 +50,19 @@ async def language_menu(callback: CallbackQuery, state: FSMContext) -> None:
     await open_language(callback, state)
 
 
+@router.callback_query(MenuCb.filter(F.action == "grammar"))
+async def grammar_menu(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    text = texts.grammar_menu(progress.todays_topic(), progress.is_done_today())
+    await show_nav(callback, state, text, kb.grammar_menu())
+
+
+@router.callback_query(MenuCb.filter(F.action == "writing"))
+async def writing_menu(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    await show_nav(callback, state, texts.WRITING_MENU, kb.writing_menu())
+
+
 # ─────────────── Kunlik dars ───────────────
 
 async def send_lesson(bot: Bot, chat_id: int, morning: bool = False) -> None:

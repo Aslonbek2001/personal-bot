@@ -12,7 +12,7 @@ def buttons(markup: InlineKeyboardMarkup) -> list:
 
 def test_callback_data_fits_for_every_node():
     library = loader.current()
-    markups = [kb.main_menu(library.subjects), kb.language_menu(), kb.lesson_end(), kb.reply_nav(speak=True)]
+    markups = [kb.main_menu(library.subjects), kb.language_menu(), kb.grammar_menu(), kb.writing_menu(), kb.lesson_end(), kb.reply_nav(speak=True)]
     for subject in library.subjects:
         for node in library.walk(subject.root):
             if node.children:

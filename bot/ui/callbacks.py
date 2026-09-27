@@ -4,7 +4,7 @@ from aiogram.filters.callback_data import CallbackData
 
 
 class MenuCb(CallbackData, prefix="m"):
-    action: str  # home, lang, today, done, progress, mistakes, words, speak, noop
+    action: str  # home, lang, grammar, writing, today, done, progress, mistakes, words, speak, noop
 
 
 class ModeCb(CallbackData, prefix="mode"):

@@ -39,6 +39,7 @@ class FakeSession(BaseSession):
         if isinstance(method, (SendMessage, SendPhoto, EditMessageText)):
             message_id = method.message_id if isinstance(method, EditMessageText) else next(self.ids)
             if isinstance(method.reply_markup, InlineKeyboardMarkup):
+                self.markups.pop(message_id, None)  # tahrirlangan xabar eng oxirgi bo'ladi
                 self.markups[message_id] = method.reply_markup
             return Message(
                 message_id=message_id,
@@ -111,7 +112,7 @@ EXPLANATION = Explanation(what="w", why="y", how="A -> B", where="api", example=
 
 @pytest.fixture
 def mocks(monkeypatch):
-    calls: dict[str, list] = {"lesson": [], "practice": [], "explain": [], "tech": [], "stt": []}
+    calls: dict[str, list] = {"lesson": [], "opening": [], "practice": [], "explain": [], "tech": [], "stt": []}
 
     async def make_lesson(topic):
         calls["lesson"].append(topic)
@@ -120,6 +121,7 @@ def mocks(monkeypatch):
                       story_title="Story", story="text", words=words)
 
     async def opening(mode, topic, words, mistakes):
+        calls["opening"].append(mode)
         return Opening(message="Hi", question="How was your day?")
 
     async def practice_reply(text, history, mode, topic, words, mistakes, seconds=None):
@@ -177,6 +179,7 @@ async def test_full_flow(harness, mocks):
 
     calls = await h.press("🇬🇧 English")
     assert isinstance(calls[-1], EditMessageText) and "📖 Bugun:" in calls[-1].text
+    await h.press(texts.BTN_GRAMMAR)
 
     calls = await h.press(texts.BTN_TODAY)
     assert any(isinstance(c, SendPhoto) for c in calls)
@@ -232,6 +235,57 @@ async def test_full_flow(harness, mocks):
 
     calls = await h.press(texts.BTN_HOME)
     assert "asosiy menyu" in texts_of(calls)
+
+
+def rows(call) -> list[list[str]]:
+    return [[b.text for b in row] for row in call.reply_markup.inline_keyboard]
+
+
+async def test_english_menus(harness, mocks):
+    h = harness
+    await h.send("/start")
+    calls = await h.press("🇬🇧 English")
+    assert rows(calls[-1]) == [
+        [texts.BTN_GRAMMAR],
+        [texts.BTN_SPEAKING, texts.BTN_WRITING],
+        [texts.BTN_MISTAKES, texts.BTN_WORDS],
+        [texts.BTN_PROGRESS, texts.BTN_BACK],
+    ]
+    assert "📖 Bugun:" in calls[-1].text and "📊 Progress: 0/32" in calls[-1].text
+    nav_id = calls[-1].message_id
+
+    calls = await h.press(texts.BTN_GRAMMAR)
+    assert isinstance(calls[-1], EditMessageText) and calls[-1].message_id == nav_id
+    assert "📘 <b>Grammatika</b>" in calls[-1].text and "📖 Bugun:" in calls[-1].text
+    assert rows(calls[-1]) == [[texts.BTN_TODAY, texts.BTN_CHAT], [texts.BTN_DONE], [texts.BTN_BACK]]
+    await h.press(texts.BTN_DONE)
+    calls = await h.press(texts.BTN_BACK)  # Bajardim xabari ostidagi 🏠 emas: nav xabari
+    assert calls[-1].message_id == nav_id and "📖 Bugun:" in calls[-1].text and "✅" in calls[-1].text
+
+    calls = await h.press(texts.BTN_WRITING)
+    assert calls[-1].message_id == nav_id and rows(calls[-1]) == [[texts.BTN_TRANSLATE, texts.BTN_TASK],
+                                                                  [texts.BTN_BACK]]
+    await h.press(texts.BTN_TASK)
+    await h.press(texts.BTN_TRANSLATE)
+    assert mocks["opening"] == ["task", "translate"]
+    calls = await h.press(texts.BTN_HOME)  # javob ostidagi 🏠 Menyu -> English menyusi
+    assert texts.BTN_GRAMMAR in str(calls[-1].reply_markup)
+
+    await h.press(texts.BTN_SPEAKING)
+    assert mocks["opening"][-1] == "standup"
+    await h.press(texts.BTN_HOME)
+    for label, marker in [(texts.BTN_MISTAKES, "Xatolarim"), (texts.BTN_WORDS, "Bugungi so'zlar"),
+                          (texts.BTN_PROGRESS, "Grammatika: 1/32")]:
+        calls = await h.press(label)
+        assert marker in texts_of(calls)
+
+    calls = await h.press(texts.BTN_BACK)
+    assert "asosiy menyu" in texts_of(calls)
+
+    # Eski xabarlardagi tugmalar ishlashda davom etadi
+    await h.callback("mode:chat")
+    await h.callback("m:today")
+    assert mocks["opening"][-1] == "chat" and len(mocks["lesson"]) == 1
 
 
 async def test_reload_picks_up_new_topic(harness, mocks):

@@ -15,13 +15,16 @@ MODE_ICONS = {"chat": "💬", "translate": "🔁", "task": "💼", "standup": "�
 
 BTN_HOME = "🏠 Menyu"
 BTN_BACK = "⬅️ Orqaga"
+BTN_GRAMMAR = "📘 Grammatika"
+BTN_SPEAKING = "🎙 Speaking"
+BTN_WRITING = "✍️ Writing"
 BTN_TODAY = "📚 Bugungi dars"
 BTN_CHAT = "💬 Suhbat"
 BTN_START_CHAT = "💬 Suhbatni boshlash"
 BTN_TRANSLATE = "🔁 Tarjima"
 BTN_TASK = "💼 Ish yozishmasi"
 BTN_STANDUP = "🎙 Stand-up"
-BTN_MISTAKES = "📝 Xatolarim"
+BTN_MISTAKES = "📝 Mistakes"
 BTN_WORDS = "🔤 So'zlar"
 BTN_PROGRESS = "📊 Progress"
 BTN_DONE = "✅ Bajardim"
@@ -50,11 +53,14 @@ def greeting(lesson_hour: int, reminder_hour: int) -> str:
 
 # ─────────────── Menyular ───────────────
 
-def today_lines(topic: str | None, done_today: bool, count: int, total: int, words: Sequence) -> list[str]:
+def today_line(topic: str | None, done_today: bool) -> str:
     if topic is None:
-        lines = ["🎉 Barcha mavzular tugadi"]
-    else:
-        lines = [f"📖 Bugun: {esc(short(topic))}" + (" ✅" if done_today else "")]
+        return "🎉 Barcha mavzular tugadi"
+    return f"📖 Bugun: {esc(short(topic))}" + (" ✅" if done_today else "")
+
+
+def today_lines(topic: str | None, done_today: bool, count: int, total: int, words: Sequence) -> list[str]:
+    lines = [today_line(topic, done_today)]
     lines.append(f"📊 Progress: {count}/{total}")
     if words:
         lines.append(words_line(words))
@@ -67,6 +73,13 @@ def main_menu(summary: list[str]) -> str:
 
 def language_menu(label: str, summary: list[str]) -> str:
     return "\n".join([f"<b>{esc(label)}</b>", "", *summary])
+
+
+def grammar_menu(topic: str | None, done_today: bool) -> str:
+    return "\n".join(["📘 <b>Grammatika</b>", "", today_line(topic, done_today)])
+
+
+WRITING_MENU = "✍️ <b>Writing</b>\n\nRejimni tanlang:"
 
 
 def reloaded(subjects: int, topics: int, nodes: int) -> str:
