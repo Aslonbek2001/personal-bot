@@ -47,7 +47,7 @@ async def _clean(source: Path, target: Path) -> Path:
     return target
 
 
-async def transcribe(audio: bytes, prompt: str = "") -> str:
+async def transcribe(audio: bytes, prompt: str = "", language: str = "") -> str:
     """Telegram ovozli xabarini matnga aylantiradi."""
     with tempfile.TemporaryDirectory() as folder:
         source = Path(folder) / "voice.ogg"
@@ -55,8 +55,8 @@ async def transcribe(audio: bytes, prompt: str = "") -> str:
         path = await _clean(source, Path(folder) / "clean.flac")
 
         options: dict = {"model": settings.stt_model, "temperature": 0}
-        if settings.stt_language:
-            options["language"] = settings.stt_language
+        if language := language or settings.stt_language:
+            options["language"] = language
         if prompt:
             options["prompt"] = prompt
 

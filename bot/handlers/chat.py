@@ -12,7 +12,7 @@ from bot.content import loader
 from bot.content.models import Subject
 from bot.handlers.common import Tech, exclusive, is_tech, send_text, thinking
 from bot.handlers.knowledge import scope_node
-from bot.handlers.language import review_mistakes, topic_title
+from bot.handlers.practice import review_mistakes, topic_title
 from bot.services import journal, lessons, progress
 from bot.ui import keyboards as kb
 from bot.ui import texts
@@ -33,6 +33,12 @@ def knowledge_subject(data: dict) -> Subject | None:
     return next((s for s in library.subjects if s.type == "knowledge"), None)
 
 
+def practice_language(data: dict) -> Subject | None:
+    """Tanlangan til (FSM dagi lang); tanlanmagan bo'lsa — birinchi til."""
+    library = loader.current()
+    return library.language_by_code(data.get("lang", "")) or library.default_language
+
+
 async def respond(
     bot: Bot,
     chat_id: int,
@@ -45,8 +51,12 @@ async def respond(
     """Holatga qarab mashq yoki tech javobini oladi, natijani DB ga yozadi va yuboradi."""
     current = await state.get_state()
     data = await state.get_data()
-    subject = knowledge_subject(data) if is_tech(current) else None
-    in_tech = subject is not None
+    knowledge = knowledge_subject(data) if is_tech(current) else None
+    in_tech = knowledge is not None
+    subject = knowledge or practice_language(data)
+    if subject is None:
+        return
+    lang = subject.code or settings.stt_language  # suhbat tili: jurnal va so'zlar shu kod bilan
     scope = scope_node(data) if current == Tech.chat.state else None
 
     day = progress.today()
@@ -63,24 +73,24 @@ async def respond(
                 names = scope.scope_names() if scope else None
                 reply = await ai.tech_reply(subject, text, history, names, seconds)
             else:
-                mistakes = review_mistakes() if mode == "review" else []
+                mistakes = review_mistakes(subject) if mode == "review" else []
                 reply = await ai.practice_reply(
-                    text, history, mode, topic_title(), lessons.today_words(), mistakes, seconds
+                    subject, text, history, mode, topic_title(subject), lessons.today_words(lang), mistakes, seconds
                 )
     except Exception:
         log.exception("Javob olinmadi")
         await bot.send_message(chat_id, texts.ERROR)
         return
 
-    words = lessons.day_words(day)
+    words = lessons.day_words(lang, day)
     used = lessons.find_used_words(text, [w.word for w in words if not w.used])
     if used:
-        lessons.mark_words_used(day, used)
-        words = lessons.day_words(day)
-    journal.add_answer(mode, text, len(text.split()), seconds, len(reply.fixes))
-    journal.add_mistakes([(fix.wrong, fix.right, fix.note) for fix in reply.fixes])
+        lessons.mark_words_used(lang, day, used)
+        words = lessons.day_words(lang, day)
+    journal.add_answer(lang, mode, text, len(text.split()), seconds, len(reply.fixes))
+    journal.add_mistakes(lang, [(fix.wrong, fix.right, fix.note) for fix in reply.fixes])
 
-    speak = plain(reply.improved or reply.corrected or "").strip()
+    speak = plain(reply.improved or reply.corrected or "").strip() if subject.tts else ""
     body = texts.reply_text(
         reply,
         transcript=text if seconds is not None else None,
@@ -92,7 +102,7 @@ async def respond(
         topic=scope.parent if scope else None,
         next_node=scope.next_sibling() if scope else None,
         speak=bool(speak),
-        home="home" if in_tech else "lang",
+        lang=None if in_tech else subject.code,
     )
     sent = await send_text(bot, chat_id, body, markup, reply_to)
 

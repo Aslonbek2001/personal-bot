@@ -47,10 +47,6 @@ class Settings(BaseSettings):
         return ZoneInfo(self.timezone)
 
     @property
-    def process_path(self) -> Path:
-        return self.data_dir / "process.md"
-
-    @property
     def db_path(self) -> Path:
         return self.data_dir / "bot.db"
 

@@ -5,13 +5,17 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup
 
 from bot.content import loader
 from bot.handlers.common import show_nav
-from bot.handlers.language import summary
+from bot.services import progress
 from bot.ui import keyboards as kb
 from bot.ui import texts
 
 
 def main_menu_text() -> str:
-    return texts.main_menu(summary())
+    lines = []
+    for subject in loader.current().languages:
+        stats = progress.progress(subject)
+        lines.append(texts.main_menu_line(subject.icon, progress.todays_topic(subject), stats.count, stats.total))
+    return texts.main_menu(lines)
 
 
 def main_menu_kb() -> InlineKeyboardMarkup:

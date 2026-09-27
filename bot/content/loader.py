@@ -113,11 +113,17 @@ def load(root: Path) -> Library:
             order=int(meta.get("order", 100)),
             code=meta.get("code", ""),
             scheduled=bool(meta.get("scheduled", False)),
+            level=meta.get("default_level", ""),
+            writing=meta.get("writing", "work"),
+            tts=bool(meta.get("tts", False)),
             prompt=prompt.read_text(encoding="utf-8") if prompt.exists() else "",
             root=node,
             grammar=read_grammar(folder / "grammar") if kind == "language" else (),
         ))
     subjects.sort(key=lambda s: (s.order, s.key))
+    codes = [s.code for s in subjects if s.type == "language"]
+    if not all(codes) or len(codes) != len(set(codes)):
+        raise ContentError(f"Har bir til subject.toml da noyob code ga ega bo'lishi kerak: {codes}")
     style = root / "shared" / "style.md"
     return Library(
         profile=(root / "profile.md").read_text(encoding="utf-8"),

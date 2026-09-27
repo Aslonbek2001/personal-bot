@@ -1,4 +1,4 @@
-"""Kunlik dars keshi va kunning so'zlari."""
+"""Dars keshi va kunning so'zlari — har bir til (lang) alohida."""
 
 import asyncio
 import re
@@ -7,6 +7,7 @@ from datetime import date
 
 from bot.ai import client as ai
 from bot.ai.schemas import Lesson
+from bot.content.models import Subject
 from bot.services import db
 from bot.services.progress import today
 
@@ -15,25 +16,26 @@ from bot.services.progress import today
 _lesson_lock = asyncio.Lock()
 
 
-def cached_lesson(day: date, topic: str) -> str | None:
+def cached_lesson(lang: str, day: date, topic: str) -> str | None:
     row = db.conn().execute(
-        "SELECT data FROM lessons WHERE day = ? AND topic = ?", (day.isoformat(), topic)
+        "SELECT data FROM lessons WHERE lang = ? AND day = ? AND topic = ?", (lang, day.isoformat(), topic)
     ).fetchone()
     return row["data"] if row else None
 
 
-def save_lesson(day: date, topic: str, data: str, words: list[tuple[str, str, str]]) -> None:
+def save_lesson(lang: str, day: date, topic: str, data: str, words: list[tuple[str, str, str]]) -> None:
+    """Darsni saqlaydi; kunning so'zlari — shu tildagi oxirgi darsning so'zlari."""
     conn = db.conn()
     conn.execute("BEGIN")
     try:
         conn.execute(
-            "INSERT OR REPLACE INTO lessons (day, topic, data) VALUES (?, ?, ?)",
-            (day.isoformat(), topic, data),
+            "INSERT OR REPLACE INTO lessons (lang, day, topic, data) VALUES (?, ?, ?, ?)",
+            (lang, day.isoformat(), topic, data),
         )
-        conn.execute("DELETE FROM words WHERE day = ?", (day.isoformat(),))
+        conn.execute("DELETE FROM words WHERE lang = ? AND day = ?", (lang, day.isoformat()))
         conn.executemany(
-            "INSERT OR IGNORE INTO words (day, position, word, uz, example) VALUES (?, ?, ?, ?, ?)",
-            [(day.isoformat(), n, word, uz, example) for n, (word, uz, example) in enumerate(words)],
+            "INSERT OR IGNORE INTO words (lang, day, position, word, uz, example) VALUES (?, ?, ?, ?, ?, ?)",
+            [(lang, day.isoformat(), n, word, uz, example) for n, (word, uz, example) in enumerate(words)],
         )
         conn.execute("COMMIT")
     except Exception:
@@ -41,16 +43,16 @@ def save_lesson(day: date, topic: str, data: str, words: list[tuple[str, str, st
         raise
 
 
-async def get_lesson(topic: str) -> Lesson:
-    """Bugungi darsni bir marta yaratadi va DB da saqlaydi."""
+async def get_lesson(subject: Subject, topic: str) -> Lesson:
+    """Mavzu darsini bugun bir marta yaratadi va DB da saqlaydi (kalit: til, kun, mavzu)."""
     day = today()
     async with _lesson_lock:
-        saved = cached_lesson(day, topic)
+        saved = cached_lesson(subject.code, day, topic)
         if saved:
             return Lesson.model_validate_json(saved)
-        lesson = await ai.make_lesson(topic)
+        lesson = await ai.make_lesson(subject, topic)
         words = [(w.word, w.uz, w.example) for w in lesson.words]
-        save_lesson(day, topic, lesson.model_dump_json(), words)
+        save_lesson(subject.code, day, topic, lesson.model_dump_json(), words)
         return lesson
 
 
@@ -64,22 +66,22 @@ class DayWord:
     used: bool
 
 
-def day_words(day: date) -> list[DayWord]:
+def day_words(lang: str, day: date) -> list[DayWord]:
     rows = db.conn().execute(
-        "SELECT word, uz, example, used_at FROM words WHERE day = ? ORDER BY position",
-        (day.isoformat(),),
+        "SELECT word, uz, example, used_at FROM words WHERE lang = ? AND day = ? ORDER BY position",
+        (lang, day.isoformat()),
     ).fetchall()
     return [DayWord(row["word"], row["uz"], row["example"], row["used_at"] is not None) for row in rows]
 
 
-def today_words() -> list[str]:
-    return [w.word for w in day_words(today())]
+def today_words(lang: str) -> list[str]:
+    return [w.word for w in day_words(lang, today())]
 
 
-def mark_words_used(day: date, words: list[str]) -> None:
+def mark_words_used(lang: str, day: date, words: list[str]) -> None:
     db.conn().executemany(
-        "UPDATE words SET used_at = ? WHERE day = ? AND word = ? AND used_at IS NULL",
-        [(db.now().isoformat(), day.isoformat(), word) for word in words],
+        "UPDATE words SET used_at = ? WHERE lang = ? AND day = ? AND word = ? AND used_at IS NULL",
+        [(db.now().isoformat(), lang, day.isoformat(), word) for word in words],
     )
 
 

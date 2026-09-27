@@ -4,3 +4,5 @@ type = "language"
 order = 1
 code = "en"
 scheduled = true
+writing = "work"
+tts = true

@@ -48,25 +48,19 @@ async def _ask(model: type[T], subject: Subject, task: str, messages: list[dict]
         return await _request(model, system, messages, max_tokens * 2)
 
 
-def _language() -> Subject:
-    subject = loader.current().language
-    if subject is None:
-        raise LookupError("content/ da scheduled=true til topilmadi")
-    return subject
-
-
-async def make_lesson(topic: str) -> Lesson:
+async def make_lesson(subject: Subject, topic: str) -> Lesson:
     messages = [{"role": "user", "content": f"Today's grammar topic: {topic}"}]
-    return await _ask(Lesson, _language(), prompts.LESSON_TASK, messages, max_tokens=8000)
+    return await _ask(Lesson, subject, prompts.LESSON_TASK, messages, max_tokens=8000)
 
 
-async def opening(mode: str, topic: str, words: list[str], mistakes: list[str]) -> Opening:
+async def opening(subject: Subject, mode: str, topic: str, words: list[str], mistakes: list[str]) -> Opening:
     task = prompts.mode_task(mode, topic, words, mistakes)
     messages = [{"role": "user", "content": "Let's start. Give me the first question or task."}]
-    return await _ask(Opening, _language(), task, messages, max_tokens=2000)
+    return await _ask(Opening, subject, task, messages, max_tokens=2000)
 
 
 async def practice_reply(
+    subject: Subject,
     text: str,
     history: list[dict],
     mode: str,
@@ -77,7 +71,7 @@ async def practice_reply(
 ) -> ChatReply:
     task = prompts.mode_task(mode, topic, words, mistakes)
     messages = [*history, prompts.user_message(text, seconds)]
-    return await _ask(ChatReply, _language(), task, messages, max_tokens=4000)
+    return await _ask(ChatReply, subject, task, messages, max_tokens=4000)
 
 
 async def explain_subsection(subject: Subject, section: str, topic: str, subsection: str) -> Explanation:

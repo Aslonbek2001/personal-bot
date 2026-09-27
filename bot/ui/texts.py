@@ -28,11 +28,19 @@ BTN_MISTAKES = "📝 Mistakes"
 BTN_WORDS = "🔤 So'zlar"
 BTN_PROGRESS = "📊 Progress"
 BTN_DONE = "✅ Bajardim"
+BTN_NEXT_TOPIC = "📖 Keyingi mavzu"
 BTN_REVIEW = "🔁 Xatolar ustida ishlash"
 BTN_SPEAK = "🔊 Talaffuz"
 BTN_SUBSECTIONS = "⬅️ Qismlar"
 BTN_PREV = "◀️"
 BTN_NEXT = "▶️"
+
+
+WRITING_LABELS = {"work": "💼 Ish yozishmasi", "daily": "✉️ Kundalik yozishma"}
+
+
+def writing_label(kind: str) -> str:
+    return WRITING_LABELS.get(kind, BTN_TASK)
 
 
 def btn_next_subsection(name: str) -> str:
@@ -53,18 +61,25 @@ def greeting(lesson_hour: int, reminder_hour: int) -> str:
 
 # ─────────────── Menyular ───────────────
 
-def today_line(topic: str | None, done_today: bool) -> str:
+def today_line(topic: str | None, done_today: int) -> str:
+    """Hali bajarilmagan birinchi mavzu; bugun tugallanganlar soni ✅ bilan."""
+    done = f" (bugun ✅ {done_today})" if done_today else ""
     if topic is None:
-        return "🎉 Barcha mavzular tugadi"
-    return f"📖 Bugun: {esc(short(topic))}" + (" ✅" if done_today else "")
+        return "🎉 Barcha mavzular tugadi" + done
+    return f"📖 Bugun: {esc(short(topic))}" + done
 
 
-def today_lines(topic: str | None, done_today: bool, count: int, total: int, words: Sequence) -> list[str]:
+def today_lines(topic: str | None, done_today: int, count: int, total: int, words: Sequence) -> list[str]:
     lines = [today_line(topic, done_today)]
     lines.append(f"📊 Progress: {count}/{total}")
     if words:
         lines.append(words_line(words))
     return lines
+
+
+def main_menu_line(icon: str, topic: str | None, count: int, total: int) -> str:
+    today = esc(short(topic)) if topic else "🎉"
+    return f"{icon} {today} · {count}/{total}"
 
 
 def main_menu(summary: list[str]) -> str:
@@ -75,7 +90,7 @@ def language_menu(label: str, summary: list[str]) -> str:
     return "\n".join([f"<b>{esc(label)}</b>", "", *summary])
 
 
-def grammar_menu(topic: str | None, done_today: bool) -> str:
+def grammar_menu(topic: str | None, done_today: int) -> str:
     return "\n".join(["📘 <b>Grammatika</b>", "", today_line(topic, done_today)])
 
 
@@ -95,8 +110,7 @@ def reload_failed(error: Exception) -> str:
 ALL_TOPICS_DONE = "🎉 Barcha grammatika mavzulari tugadi! content/ ga yangi mavzular qo'shing."
 LESSON_FAILED = "⚠️ Darsni tayyorlab bo'lmadi. Birozdan keyin 📚 Bugungi dars ni bosing."
 NO_REVIEW_MISTAKES = "📝 Oxirgi 2 haftada xato topilmadi. Zo'r! 🎉"
-DONE_NOTHING = "Barcha mavzular tugagan"
-DONE_ALREADY = "Bugungi mavzu allaqachon belgilangan"
+DONE_ALREADY = "Bu mavzu allaqachon belgilangan"
 DONE_OK = "✅ Belgilandi"
 
 
@@ -117,15 +131,15 @@ def lesson_parts(lesson: Lesson) -> list[str]:
 
 
 def done_text(topic: str, upcoming: str | None) -> str:
-    tomorrow = f"📅 Ertaga: {esc(short(upcoming))}" if upcoming else "🎉 Bu oxirgi mavzu edi!"
-    return f"✅ <b>Zo'r! Mavzu yakunlandi.</b>\n\n\"{esc(short(topic))}\" progressga yozildi.\n{tomorrow}"
+    after = f"📖 Keyingi mavzu: {esc(short(upcoming))}" if upcoming else "🎉 Bu oxirgi mavzu edi!"
+    return f"✅ <b>Zo'r! Mavzu yakunlandi.</b>\n\n\"{esc(short(topic))}\" progressga yozildi.\n{after}"
 
 
 def words_line(words: Sequence) -> str:
     return f"🔤 So'zlar: {sum(w.used for w in words)}/{len(words)}"
 
 
-def progress_text(progress, week, topic: str | None, done_today: bool, words: Sequence) -> str:
+def progress_text(progress, week, topic: str | None, done_today: int, words: Sequence) -> str:
     filled = round(progress.percent / 10)
     bar = "▓" * filled + "░" * (10 - filled)
     lines = [
@@ -144,7 +158,7 @@ def progress_text(progress, week, topic: str | None, done_today: bool, words: Se
         lines += ["", "<b>Oxirgi tugallangan mavzular:</b>"]
         lines += [f"• {entry.day:%d.%m} — {esc(short(entry.topic))}" for entry in progress.done[-10:]]
     if topic:
-        lines += ["", f"📖 Bugun: {esc(short(topic))} {'✅' if done_today else '⏳'}"]
+        lines += ["", today_line(topic, done_today)]
         if words:
             lines.append(words_line(words))
     return "\n".join(lines)

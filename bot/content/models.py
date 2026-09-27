@@ -64,6 +64,9 @@ class Subject:
     root: Node
     code: str = ""
     scheduled: bool = False
+    level: str = ""  # default_level: A2, B1
+    writing: str = "work"  # Writing rejimi turi: work, daily (tugma nomi ui/texts.py da)
+    tts: bool = False  # 🔊 Talaffuz (Groq TTS shu tilni qo'llasa)
     grammar: tuple[GrammarBlock, ...] = ()
 
     @property
@@ -88,13 +91,20 @@ class Library:
         return next(subject for subject in self.subjects if subject.root is root)
 
     @property
-    def language(self) -> Subject | None:
-        """Kunlik dars yuboriladigan til (scheduled=true)."""
-        return next((s for s in self.subjects if s.type == "language" and s.scheduled), None)
+    def languages(self) -> list[Subject]:
+        return [s for s in self.subjects if s.type == "language"]
 
-    def grammar_topics(self) -> list[str]:
-        language = self.language
-        return [topic for block in language.grammar for topic in block.topics] if language else []
+    def language_by_code(self, code: str) -> Subject | None:
+        return next((s for s in self.languages if s.code == code), None)
+
+    @property
+    def default_language(self) -> Subject | None:
+        """Til tanlanmagan bo'lsa (masalan /start dan keyin matn yozilsa) — tartibdagi birinchi til."""
+        return self.languages[0] if self.languages else None
+
+    def grammar_topics(self, subject: Subject | None = None) -> list[str]:
+        subject = subject or self.default_language
+        return [topic for block in subject.grammar for topic in block.topics] if subject else []
 
     @staticmethod
     def walk(node: Node) -> Iterator[Node]:

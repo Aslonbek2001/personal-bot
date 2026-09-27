@@ -1,14 +1,25 @@
-"""callback_data klasslari. Hammasi 64 baytdan qisqa: nomlar emas, qisqa ID lar ishlatiladi."""
+"""callback_data klasslari. Hammasi 64 baytdan qisqa: nomlar emas, qisqa ID va kodlar ishlatiladi."""
 
 from aiogram.filters.callback_data import CallbackData
 
 
 class MenuCb(CallbackData, prefix="m"):
-    action: str  # home, lang, grammar, writing, today, done, progress, mistakes, words, speak, noop
+    action: str  # home, noop, speak
 
 
-class ModeCb(CallbackData, prefix="mode"):
+class LangCb(CallbackData, prefix="l"):
+    action: str  # menu, grammar, writing, today, mistakes, words, progress
+    lang: str  # subject.toml dagi code: en, ru
+
+
+class ModeCb(CallbackData, prefix="md"):
     mode: str  # chat, translate, task, standup, review
+    lang: str
+
+
+class DoneCb(CallbackData, prefix="d"):
+    lang: str
+    topic: str  # mavzu matnining 8 belgili xeshi
 
 
 class SubjectCb(CallbackData, prefix="s"):

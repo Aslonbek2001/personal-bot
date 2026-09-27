@@ -18,7 +18,7 @@ def write(path: Path, text: str) -> None:
 
 def make_content(root: Path) -> Path:
     write(root / "profile.md", "# About me\n")
-    write(root / "lang" / "subject.toml", 'title = "Lang"\ntype = "language"\norder = 2\nscheduled = true\n')
+    write(root / "lang" / "subject.toml", 'title = "Lang"\ntype = "language"\ncode = "xx"\norder = 2\n')
     write(root / "lang" / "grammar" / "02_second.md", "# Second\n- c\n")
     write(root / "lang" / "grammar" / "01_first.md", "# First\n- a\n- b\n")
     write(root / "know" / "subject.toml", 'title = "Know"\nicon = "K"\norder = 1\n')
@@ -35,7 +35,7 @@ def test_counts_match_converted_data(library):
     groups = [n for n in library.walk(programming.root) if n.kind == "group"
               and any(c.kind == "topic" for c in n.children)]
     assert len(library.grammar_topics()) == 32
-    assert len(library.language.grammar) == 5
+    assert len(library.default_language.grammar) == 5
     assert len(groups) == 6
     assert programming.root.count("topic") == 47
     assert programming.root.count("subsection") == 188
@@ -43,7 +43,8 @@ def test_counts_match_converted_data(library):
 
 def test_subjects_sorted_by_order(library):
     assert [s.key for s in library.subjects] == ["english", "programming"]
-    assert library.language.key == "english"
+    assert library.default_language.key == "english"
+    assert library.language_by_code("en").key == "english"
     assert library.subject("english").label == "🇬🇧 English"
 
 
@@ -90,6 +91,13 @@ def test_ids_are_unique_and_short(library):
     ids = [n.id for s in library.subjects for n in library.walk(s.root)]
     assert len(ids) == len(set(ids)) == len(library.nodes)
     assert all(len(i) == 8 for i in ids)
+
+
+def test_language_needs_unique_code(tmp_path):
+    root = make_content(tmp_path)
+    write(root / "lang2" / "subject.toml", 'type = "language"\ncode = "xx"\n')
+    with pytest.raises(ContentError):
+        load(root)
 
 
 def test_collision_is_rejected(tmp_path, monkeypatch):

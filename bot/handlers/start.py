@@ -35,7 +35,8 @@ async def cmd_reload(message: Message) -> None:
         log.exception("Kontent yuklanmadi")
         await message.answer(texts.reload_failed(error))
         return
-    await message.answer(texts.reloaded(len(library.subjects), len(library.grammar_topics()), len(library.nodes)))
+    topics = sum(len(library.grammar_topics(subject)) for subject in library.languages)
+    await message.answer(texts.reloaded(len(library.subjects), topics, len(library.nodes)))
 
 
 @router.callback_query(MenuCb.filter(F.action == "home"))
@@ -59,7 +60,7 @@ async def open_subject(callback: CallbackQuery, callback_data: SubjectCb, state:
         return
     subject = library.subject_by_root(root)
     if subject.type == "language":
-        await language.open_language(callback, state)
+        await language.open_language(callback, state, subject)
     else:
         await knowledge.open_node(callback, state, root, 0)
 

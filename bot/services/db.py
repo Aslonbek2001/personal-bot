@@ -2,7 +2,7 @@
 
 import json
 import sqlite3
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any
 
 from bot.config import settings
@@ -14,25 +14,31 @@ CREATE TABLE IF NOT EXISTS fsm (
     data TEXT NOT NULL DEFAULT '{}'
 );
 CREATE TABLE IF NOT EXISTS done_topics (
-    day TEXT PRIMARY KEY,
-    topic TEXT NOT NULL
+    lang TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    day TEXT NOT NULL,
+    PRIMARY KEY (lang, topic)
 );
 CREATE TABLE IF NOT EXISTS lessons (
-    day TEXT PRIMARY KEY,
+    lang TEXT NOT NULL,
+    day TEXT NOT NULL,
     topic TEXT NOT NULL,
-    data TEXT NOT NULL
+    data TEXT NOT NULL,
+    PRIMARY KEY (lang, day, topic)
 );
 CREATE TABLE IF NOT EXISTS words (
+    lang TEXT NOT NULL,
     day TEXT NOT NULL,
     position INTEGER NOT NULL,
     word TEXT NOT NULL,
     uz TEXT NOT NULL,
     example TEXT NOT NULL,
     used_at TEXT,
-    PRIMARY KEY (day, word)
+    PRIMARY KEY (lang, day, word)
 );
 CREATE TABLE IF NOT EXISTS answers (
     id INTEGER PRIMARY KEY,
+    lang TEXT NOT NULL,
     created_at TEXT NOT NULL,
     day TEXT NOT NULL,
     mode TEXT NOT NULL,
@@ -43,15 +49,22 @@ CREATE TABLE IF NOT EXISTS answers (
 );
 CREATE TABLE IF NOT EXISTS mistakes (
     id INTEGER PRIMARY KEY,
+    lang TEXT NOT NULL,
     created_at TEXT NOT NULL,
     day TEXT NOT NULL,
     wrong TEXT NOT NULL,
     right TEXT NOT NULL,
     note TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS answers_day ON answers (day);
-CREATE INDEX IF NOT EXISTS mistakes_day ON mistakes (day);
+CREATE INDEX IF NOT EXISTS answers_day ON answers (lang, day);
+CREATE INDEX IF NOT EXISTS mistakes_day ON mistakes (lang, day);
 """
+LANG_TABLES = ("done_topics", "lessons", "words", "answers", "mistakes")
+
+
+class OldSchemaError(RuntimeError):
+    pass
+
 
 _conn: sqlite3.Connection | None = None
 
@@ -60,11 +73,29 @@ def conn() -> sqlite3.Connection:
     global _conn
     if _conn is None:
         settings.data_dir.mkdir(parents=True, exist_ok=True)
-        _conn = sqlite3.connect(settings.db_path, check_same_thread=False, isolation_level=None)
-        _conn.row_factory = sqlite3.Row
-        _conn.execute("PRAGMA journal_mode=WAL")
-        _conn.executescript(SCHEMA)
+        connection = sqlite3.connect(settings.db_path, check_same_thread=False, isolation_level=None)
+        connection.row_factory = sqlite3.Row
+        try:
+            _check_schema(connection)
+        except OldSchemaError:
+            connection.close()
+            raise
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.executescript(SCHEMA)
+        _conn = connection
     return _conn
+
+
+def _check_schema(connection: sqlite3.Connection) -> None:
+    """Eski sxemadagi bazani (lang ustunisiz) hech qachon o'zgartirmaydi: to'xtaydi va xabar beradi."""
+    for table in LANG_TABLES:
+        columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
+        if columns and "lang" not in columns:
+            raise OldSchemaError(
+                f"{settings.db_path} eski sxemada ({table} jadvalida lang ustuni yo'q). "
+                f"Bot uni o'zgartirmaydi. Botni to'xtating va {settings.db_path} hamda "
+                f"{settings.db_path}-wal, {settings.db_path}-shm fayllarini o'chiring: yangi bo'sh baza yaratiladi."
+            )
 
 
 def close() -> None:
@@ -80,26 +111,6 @@ def now() -> datetime:
 
 def init() -> None:
     conn()
-    _import_process_md()
-
-
-def _import_process_md() -> None:
-    path = settings.process_path
-    if not path.exists():
-        return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        day, separator, topic = line.removeprefix("- ").partition(" | ")
-        if not line.startswith("- ") or not separator:
-            continue
-        try:
-            date.fromisoformat(day.strip())
-        except ValueError:
-            continue
-        conn().execute(
-            "INSERT OR IGNORE INTO done_topics (day, topic) VALUES (?, ?)",
-            (day.strip(), topic.strip()),
-        )
-    path.rename(path.with_suffix(".md.imported"))
 
 
 # ─────────────── FSM (aiogram adapteri: bot/handlers/fsm.py) ───────────────

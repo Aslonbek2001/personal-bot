@@ -3,7 +3,7 @@
 from aiogram import F, Router
 
 from bot.config import settings
-from bot.handlers import chat, knowledge, language, start, voice
+from bot.handlers import chat, knowledge, language, practice, start, voice
 
 
 def build_router() -> Router:
@@ -12,6 +12,6 @@ def build_router() -> Router:
     root.message.filter(F.from_user.id == settings.owner_id, F.chat.type == "private")
     root.callback_query.filter(F.from_user.id == settings.owner_id, F.message.chat.type == "private")
     root.include_routers(
-        start.router, language.router, knowledge.router, voice.router, chat.router, start.fallback,
+        start.router, language.router, practice.router, knowledge.router, voice.router, chat.router, start.fallback,
     )
     return root

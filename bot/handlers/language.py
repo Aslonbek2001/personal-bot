@@ -1,4 +1,7 @@
-"""English: menyu, kunlik dars, mashq rejimlari, xatolar, so'zlar, progress va talaffuz."""
+"""Til (English, Russian): menyu va ichki menyular, dars, Bajardim, xatolar, so'zlar, progress.
+
+Til callback_data dagi `lang` (subject.toml dagi code) bilan tanlanadi: bitta kod barcha tillar uchun.
+"""
 
 import asyncio
 import logging
@@ -6,80 +9,96 @@ from datetime import timedelta
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery, ReplyParameters
-from aiogram.utils.chat_action import ChatActionSender
+from aiogram.types import BufferedInputFile, CallbackQuery
 
-from bot.ai import client as ai
 from bot.content import loader
+from bot.content.models import Subject
 from bot.handlers.common import exclusive, send_text, show_nav, thinking
 from bot.services import journal, lessons, progress
 from bot.ui import keyboards as kb
 from bot.ui import texts
-from bot.ui.callbacks import MenuCb, ModeCb
+from bot.ui.callbacks import DoneCb, LangCb
 from bot.ui.card import render_card
-from bot.ui.format import short
-from bot.voice import tts
 
 log = logging.getLogger(__name__)
 
 router = Router(name="language")
 
-REVIEW_DAYS = 14
+
+async def resolve(callback: CallbackQuery, code: str) -> Subject | None:
+    """Callback dagi til kodi bo'yicha fan; endi yo'q bo'lsa, tugma eskirgan."""
+    subject = loader.current().language_by_code(code)
+    if subject is None:
+        await callback.answer(texts.STALE)
+    return subject
 
 
-# ─────────────── Menyu ───────────────
+async def select_language(state: FSMContext, subject: Subject) -> None:
+    """Matnli xabarlar shu tilga boradi; til almashsa, suhbat tarixi yangidan boshlanadi."""
+    data = await state.get_data()
+    if data.get("lang") != subject.code:
+        await state.update_data(lang=subject.code, mode="chat", history=[])
 
-def summary() -> list[str]:
-    stats = progress.progress()
+
+# ─────────────── Menyular ───────────────
+
+def summary(subject: Subject) -> list[str]:
+    stats = progress.progress(subject)
     return texts.today_lines(
-        progress.todays_topic(), progress.is_done_today(), stats.count, stats.total,
-        lessons.day_words(progress.today()),
+        progress.todays_topic(subject), progress.done_today(subject), stats.count, stats.total,
+        lessons.day_words(subject.code, progress.today()),
     )
 
 
-async def open_language(callback: CallbackQuery, state: FSMContext) -> None:
+async def open_language(callback: CallbackQuery, state: FSMContext, subject: Subject) -> None:
     await callback.answer()
     await state.set_state(None)
-    language = loader.current().language
-    label = language.label if language else "English"
-    await show_nav(callback, state, texts.language_menu(label, summary()), kb.language_menu())
+    await select_language(state, subject)
+    await show_nav(callback, state, texts.language_menu(subject.label, summary(subject)), kb.language_menu(subject))
 
 
-@router.callback_query(MenuCb.filter(F.action == "lang"))
-async def language_menu(callback: CallbackQuery, state: FSMContext) -> None:
-    await open_language(callback, state)
+@router.callback_query(LangCb.filter(F.action == "menu"))
+async def language_menu(callback: CallbackQuery, callback_data: LangCb, state: FSMContext) -> None:
+    if subject := await resolve(callback, callback_data.lang):
+        await open_language(callback, state, subject)
 
 
-@router.callback_query(MenuCb.filter(F.action == "grammar"))
-async def grammar_menu(callback: CallbackQuery, state: FSMContext) -> None:
+@router.callback_query(LangCb.filter(F.action == "grammar"))
+async def grammar_menu(callback: CallbackQuery, callback_data: LangCb, state: FSMContext) -> None:
+    if not (subject := await resolve(callback, callback_data.lang)):
+        return
     await callback.answer()
-    text = texts.grammar_menu(progress.todays_topic(), progress.is_done_today())
-    await show_nav(callback, state, text, kb.grammar_menu())
+    topic = progress.todays_topic(subject)
+    text = texts.grammar_menu(topic, progress.done_today(subject))
+    await show_nav(callback, state, text, kb.grammar_menu(subject, topic))
 
 
-@router.callback_query(MenuCb.filter(F.action == "writing"))
-async def writing_menu(callback: CallbackQuery, state: FSMContext) -> None:
+@router.callback_query(LangCb.filter(F.action == "writing"))
+async def writing_menu(callback: CallbackQuery, callback_data: LangCb, state: FSMContext) -> None:
+    if not (subject := await resolve(callback, callback_data.lang)):
+        return
     await callback.answer()
-    await show_nav(callback, state, texts.WRITING_MENU, kb.writing_menu())
+    await show_nav(callback, state, texts.WRITING_MENU, kb.writing_menu(subject))
 
 
-# ─────────────── Kunlik dars ───────────────
+# ─────────────── Dars ───────────────
 
-async def send_lesson(bot: Bot, chat_id: int, morning: bool = False) -> None:
-    topic = progress.todays_topic()
+async def send_lesson(bot: Bot, chat_id: int, subject: Subject, morning: bool = False) -> None:
+    """Hali bajarilmagan birinchi mavzu darsi: karta, grammatika, hikoya, 20 so'z."""
+    topic = progress.todays_topic(subject)
     if topic is None:
         await bot.send_message(chat_id, texts.ALL_TOPICS_DONE)
         return
     try:
         async with thinking(bot, chat_id):
-            lesson = await lessons.get_lesson(topic)
+            lesson = await lessons.get_lesson(subject, topic)
     except Exception:
         log.exception("Dars yaratilmadi")
-        await bot.send_message(chat_id, texts.LESSON_FAILED, reply_markup=kb.language_menu())
+        await bot.send_message(chat_id, texts.LESSON_FAILED, reply_markup=kb.language_menu(subject))
         return
 
-    topics = progress.read_topics()
-    number = topics.index(topic) + 1 if topic in topics else 0
+    topics = progress.read_topics(subject)
+    number = topics.index(topic) + 1
     png = await asyncio.to_thread(render_card, lesson, number, len(topics), progress.today())
     await bot.send_photo(
         chat_id, BufferedInputFile(png, filename="lesson.png"), caption=texts.lesson_caption(lesson.title, morning)
@@ -87,140 +106,76 @@ async def send_lesson(bot: Bot, chat_id: int, morning: bool = False) -> None:
     *parts, last = texts.lesson_parts(lesson)
     for part in parts:
         await send_text(bot, chat_id, part)
-    await send_text(bot, chat_id, last, kb.lesson_end())
+    await send_text(bot, chat_id, last, kb.lesson_end(subject, topic))
 
 
-@router.callback_query(MenuCb.filter(F.action == "today"))
-async def today_lesson(callback: CallbackQuery, state: FSMContext) -> None:
+@router.callback_query(LangCb.filter(F.action == "today"))
+async def today_lesson(callback: CallbackQuery, callback_data: LangCb, state: FSMContext) -> None:
+    """📚 Bugungi dars va 📖 Keyingi mavzu: ikkalasi ham hali bajarilmagan birinchi mavzu."""
+    if not (subject := await resolve(callback, callback_data.lang)):
+        return
     async with exclusive(callback.from_user.id) as free:
         if not free:
             await callback.answer(texts.BUSY)
             return
         await callback.answer()
         await state.set_state(None)
-        await send_lesson(callback.bot, callback.from_user.id)
+        await select_language(state, subject)
+        await send_lesson(callback.bot, callback.from_user.id, subject)
 
 
-# ─────────────── Mashq rejimlari ───────────────
-
-def topic_title() -> str:
-    topic = progress.todays_topic()
-    return short(topic) if topic else "free practice"
-
-
-def review_mistakes() -> list[str]:
-    since = progress.today() - timedelta(days=REVIEW_DAYS)
-    return [f"{m.wrong} -> {m.right}" for m in journal.recent_mistakes(30, since)]
-
-
-async def start_mode(bot: Bot, chat_id: int, state: FSMContext, mode: str) -> None:
-    await state.set_state(None)
-    mistakes = review_mistakes() if mode == "review" else []
-    if mode == "review" and not mistakes:
-        await bot.send_message(chat_id, texts.NO_REVIEW_MISTAKES, reply_markup=kb.language_menu())
+@router.callback_query(DoneCb.filter())
+async def mark_done(callback: CallbackQuery, callback_data: DoneCb) -> None:
+    if not (subject := await resolve(callback, callback_data.lang)):
         return
-    try:
-        async with thinking(bot, chat_id):
-            opening = await ai.opening(mode, topic_title(), lessons.today_words(), mistakes)
-    except Exception:
-        log.exception("Rejim boshlanmadi: %s", mode)
-        await bot.send_message(chat_id, texts.ERROR)
-        return
-    await send_text(bot, chat_id, texts.opening_text(mode, opening.message, opening.question), kb.reply_nav())
-    await state.update_data(
-        mode=mode,
-        history_day=progress.today().isoformat(),
-        history=[
-            {"role": "user", "content": "Let's start. Give me the first question or task."},
-            {"role": "assistant", "content": f"{opening.message}\n{opening.question}"},
-        ],
-    )
-
-
-@router.callback_query(ModeCb.filter())
-async def mode_chosen(callback: CallbackQuery, callback_data: ModeCb, state: FSMContext) -> None:
-    if callback_data.mode not in texts.MODE_ICONS:
-        await callback.answer()
-        return
-    async with exclusive(callback.from_user.id) as free:
-        if not free:
-            await callback.answer(texts.BUSY)
-            return
-        await callback.answer()
-        await start_mode(callback.bot, callback.from_user.id, state, callback_data.mode)
-
-
-# ─────────────── Xatolar, so'zlar, progress ───────────────
-
-@router.callback_query(MenuCb.filter(F.action == "mistakes"))
-async def show_mistakes(callback: CallbackQuery) -> None:
-    await callback.answer()
-    mistakes = journal.recent_mistakes(15)
-    week = journal.mistakes_count(progress.today() - timedelta(days=6))
-    await send_text(callback.bot, callback.from_user.id, texts.mistakes_text(mistakes, week),
-                    kb.mistakes_kb(bool(mistakes)))
-
-
-@router.callback_query(MenuCb.filter(F.action == "words"))
-async def show_words(callback: CallbackQuery) -> None:
-    await callback.answer()
-    words = lessons.day_words(progress.today())
-    await callback.bot.send_message(callback.from_user.id, texts.words_text(words), reply_markup=kb.words_kb())
-
-
-@router.callback_query(MenuCb.filter(F.action == "done"))
-async def mark_done(callback: CallbackQuery) -> None:
-    topic = progress.todays_topic()
+    topic = progress.find_topic(subject, callback_data.topic)
     if topic is None:
-        await callback.answer(texts.DONE_NOTHING)
+        await callback.answer(texts.STALE)
         return
-    if not progress.mark_done(topic):
+    if not progress.mark_done(subject, topic):
         await callback.answer(texts.DONE_ALREADY)
         return
     await callback.answer(texts.DONE_OK)
     await callback.bot.send_message(
-        callback.from_user.id, texts.done_text(topic, progress.next_topic()), reply_markup=kb.after_done()
+        callback.from_user.id,
+        texts.done_text(topic, progress.todays_topic(subject)),
+        reply_markup=kb.after_done(subject.code),
     )
 
 
-@router.callback_query(MenuCb.filter(F.action == "progress"))
-async def show_progress(callback: CallbackQuery) -> None:
+# ─────────────── Xatolar, so'zlar, progress (faqat shu til) ───────────────
+
+@router.callback_query(LangCb.filter(F.action == "mistakes"))
+async def show_mistakes(callback: CallbackQuery, callback_data: LangCb) -> None:
+    if not (subject := await resolve(callback, callback_data.lang)):
+        return
+    await callback.answer()
+    mistakes = journal.recent_mistakes(subject.code, 15)
+    week = journal.mistakes_count(subject.code, progress.today() - timedelta(days=6))
+    await send_text(callback.bot, callback.from_user.id, texts.mistakes_text(mistakes, week),
+                    kb.mistakes_kb(subject.code, bool(mistakes)))
+
+
+@router.callback_query(LangCb.filter(F.action == "words"))
+async def show_words(callback: CallbackQuery, callback_data: LangCb) -> None:
+    if not (subject := await resolve(callback, callback_data.lang)):
+        return
+    await callback.answer()
+    words = lessons.day_words(subject.code, progress.today())
+    await callback.bot.send_message(callback.from_user.id, texts.words_text(words),
+                                    reply_markup=kb.words_kb(subject.code))
+
+
+@router.callback_query(LangCb.filter(F.action == "progress"))
+async def show_progress(callback: CallbackQuery, callback_data: LangCb) -> None:
+    if not (subject := await resolve(callback, callback_data.lang)):
+        return
     await callback.answer()
     text = texts.progress_text(
-        progress.progress(),
-        journal.stats(progress.today() - timedelta(days=6)),
-        progress.todays_topic(),
-        progress.is_done_today(),
-        lessons.day_words(progress.today()),
+        progress.progress(subject),
+        journal.stats(subject.code, progress.today() - timedelta(days=6)),
+        progress.todays_topic(subject),
+        progress.done_today(subject),
+        lessons.day_words(subject.code, progress.today()),
     )
-    await callback.bot.send_message(callback.from_user.id, text, reply_markup=kb.progress_kb())
-
-
-# ─────────────── Talaffuz ───────────────
-
-@router.callback_query(MenuCb.filter(F.action == "speak"))
-async def speak_reply(callback: CallbackQuery, state: FSMContext) -> None:
-    message_id = callback.message.message_id if callback.message else 0
-    text = (await state.get_data()).get("speak", {}).get(str(message_id))
-    if not text:
-        await callback.answer(texts.STALE)
-        return
-    chat_id = callback.from_user.id
-    async with exclusive(chat_id) as free:
-        if not free:
-            await callback.answer(texts.BUSY)
-            return
-        await callback.answer()
-        try:
-            async with ChatActionSender.record_voice(bot=callback.bot, chat_id=chat_id):
-                audio = await tts.speak(text)
-        except Exception:
-            log.exception("Ovoz yaratilmadi")
-            await callback.bot.send_message(chat_id, texts.SPEAK_FAILED)
-            return
-    await callback.bot.send_voice(
-        chat_id,
-        BufferedInputFile(audio, filename="speech.ogg"),
-        caption=texts.speak_caption(text),
-        reply_parameters=ReplyParameters(message_id=message_id, allow_sending_without_reply=True),
-    )
+    await callback.bot.send_message(callback.from_user.id, text, reply_markup=kb.progress_kb(subject.code))

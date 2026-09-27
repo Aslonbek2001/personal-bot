@@ -114,18 +114,18 @@ EXPLANATION = Explanation(what="w", why="y", how="A -> B", where="api", example=
 def mocks(monkeypatch):
     calls: dict[str, list] = {"lesson": [], "opening": [], "practice": [], "explain": [], "tech": [], "stt": []}
 
-    async def make_lesson(topic):
-        calls["lesson"].append(topic)
+    async def make_lesson(subject, topic):
+        calls["lesson"].append((subject.code, topic))
         words = [Word(word=f"to deploy{n}", uz="joylash", example="We deploy.") for n in range(20)]
-        return Lesson(title="Present Simple", summary="s", examples=["a", "b", "c"], grammar="**rule**",
+        return Lesson(title=topic.split(" - ")[0], summary="s", examples=["a", "b", "c"], grammar="**rule**",
                       story_title="Story", story="text", words=words)
 
-    async def opening(mode, topic, words, mistakes):
-        calls["opening"].append(mode)
+    async def opening(subject, mode, topic, words, mistakes):
+        calls["opening"].append((subject.code, mode))
         return Opening(message="Hi", question="How was your day?")
 
-    async def practice_reply(text, history, mode, topic, words, mistakes, seconds=None):
-        calls["practice"].append((text, mode, seconds, len(history)))
+    async def practice_reply(subject, text, history, mode, topic, words, mistakes, seconds=None):
+        calls["practice"].append((text, mode, seconds, len(history), subject.code))
         return REPLY
 
     async def explain_subsection(subject, section, topic, subsection):
@@ -136,8 +136,8 @@ def mocks(monkeypatch):
         calls["tech"].append((subject.key, text, scope))
         return REPLY
 
-    async def transcribe(audio, prompt=""):
-        calls["stt"].append(prompt)
+    async def transcribe(audio, prompt="", language=""):
+        calls["stt"].append((prompt, language))
         return "I has fixed the bug"
 
     for name, fake in [("make_lesson", make_lesson), ("opening", opening), ("practice_reply", practice_reply),
@@ -192,12 +192,20 @@ async def test_full_flow(harness, mocks):
     calls = await h.send("I has fixed the bug")
     assert "To'g'rilangan" in texts_of(calls) and mocks["practice"][-1][:3] == ("I has fixed the bug", "chat", None)
 
+    topics = loader.current().grammar_topics()
     calls = await h.press(texts.BTN_DONE)
     assert answers(calls) == [texts.DONE_OK] and "Mavzu yakunlandi" in texts_of(calls)
-    calls = await h.press(texts.BTN_DONE)
+    assert rows(calls[-1]) == [[texts.BTN_NEXT_TOPIC, texts.BTN_PROGRESS], [texts.BTN_BACK]]
+    calls = await h.press(texts.BTN_DONE)  # o'sha dars ostidagi tugma yana: mavzu bir marta
     assert answers(calls) == [texts.DONE_ALREADY]
+
+    calls = await h.press(texts.BTN_NEXT_TOPIC)  # to'liq dars: karta + 3 qism, o'sha kesh orqali
+    assert any(isinstance(c, SendPhoto) for c in calls) and "20 words of the day" in texts_of(calls)
+    assert mocks["lesson"][-1] == ("en", topics[1])
+    calls = await h.press(texts.BTN_DONE)  # bir kunda ikkinchi mavzu
+    assert answers(calls) == [texts.DONE_OK]
     calls = await h.press(texts.BTN_PROGRESS)
-    assert "Grammatika: 1/32" in texts_of(calls)
+    assert "Grammatika: 2/32" in texts_of(calls) and "bugun ✅ 2" in texts_of(calls)
 
     calls = await h.send(voice=Voice(file_id="v", file_unique_id="v", duration=6))
     assert "Eshitildi" in texts_of(calls) and mocks["practice"][-1][2] == 6
@@ -223,7 +231,7 @@ async def test_full_flow(harness, mocks):
     assert mocks["tech"][-1] == ("programming", "Why is DNS cached?",
                                  ("Web and APIs", "HTTP request lifecycle", "DNS resolution"))
     await h.send(voice=Voice(file_id="v", file_unique_id="v", duration=4))
-    assert mocks["stt"][-1] == "HTTP request lifecycle. DNS resolution."
+    assert mocks["stt"][-1] == ("HTTP request lifecycle. DNS resolution.", "en")
 
     await h.press("➡️ Keyingi qism: TCP and TLS handshake")
     assert mocks["explain"][-1][3] == "TCP and TLS handshake"
@@ -259,20 +267,23 @@ async def test_english_menus(harness, mocks):
     assert "📘 <b>Grammatika</b>" in calls[-1].text and "📖 Bugun:" in calls[-1].text
     assert rows(calls[-1]) == [[texts.BTN_TODAY, texts.BTN_CHAT], [texts.BTN_DONE], [texts.BTN_BACK]]
     await h.press(texts.BTN_DONE)
-    calls = await h.press(texts.BTN_BACK)  # Bajardim xabari ostidagi 🏠 emas: nav xabari
-    assert calls[-1].message_id == nav_id and "📖 Bugun:" in calls[-1].text and "✅" in calls[-1].text
+    calls = await h.press(texts.BTN_BACK)  # Bajardim xabari ostidagi Orqaga: English menyusi, yangi xabar
+    assert "📖 Bugun:" in calls[-1].text and "bugun ✅ 1" in calls[-1].text
+    calls = await h.press(texts.BTN_GRAMMAR)
+    nav_id = calls[-1].message_id
+    await h.press(texts.BTN_BACK)
 
     calls = await h.press(texts.BTN_WRITING)
     assert calls[-1].message_id == nav_id and rows(calls[-1]) == [[texts.BTN_TRANSLATE, texts.BTN_TASK],
                                                                   [texts.BTN_BACK]]
     await h.press(texts.BTN_TASK)
     await h.press(texts.BTN_TRANSLATE)
-    assert mocks["opening"] == ["task", "translate"]
+    assert mocks["opening"] == [("en", "task"), ("en", "translate")]
     calls = await h.press(texts.BTN_HOME)  # javob ostidagi 🏠 Menyu -> English menyusi
     assert texts.BTN_GRAMMAR in str(calls[-1].reply_markup)
 
     await h.press(texts.BTN_SPEAKING)
-    assert mocks["opening"][-1] == "standup"
+    assert mocks["opening"][-1] == ("en", "standup")
     await h.press(texts.BTN_HOME)
     for label, marker in [(texts.BTN_MISTAKES, "Xatolarim"), (texts.BTN_WORDS, "Bugungi so'zlar"),
                           (texts.BTN_PROGRESS, "Grammatika: 1/32")]:
@@ -282,10 +293,10 @@ async def test_english_menus(harness, mocks):
     calls = await h.press(texts.BTN_BACK)
     assert "asosiy menyu" in texts_of(calls)
 
-    # Eski xabarlardagi tugmalar ishlashda davom etadi
-    await h.callback("mode:chat")
-    await h.callback("m:today")
-    assert mocks["opening"][-1] == "chat" and len(mocks["lesson"]) == 1
+    # Eski formatdagi tugmalar (til kodisiz) eskirgan deb javob oladi
+    for old in ["mode:chat", "m:today", "m:done", "m:lang", "l:menu:xx"]:
+        assert answers(await h.callback(old)) == [texts.STALE]
+    assert mocks["lesson"] == [] and len(mocks["opening"]) == 3
 
 
 async def test_reload_picks_up_new_topic(harness, mocks):
